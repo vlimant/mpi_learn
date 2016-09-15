@@ -1,12 +1,9 @@
 ### MPIWorker and MPIMaster classes 
 
 import time
-import sys
-import os.path
+import os,sys
 import numpy as np
 from mpi4py import MPI
-
-from keras.models import model_from_json
 
 ### Utilities ###
 
@@ -24,7 +21,7 @@ class MPIProcess(object):
            parent_comm: MPI intracommunicator
            parent_rank: rank of this node's parent in the given communicator'''
 
-    def __init__(self, parent_comm, parent_rank=None):
+    def __init__(self, parent_comm, parent_rank=None, gpu=None):
         self.parent_comm = parent_comm 
         self.parent_rank = parent_rank
         self.rank = parent_comm.Get_rank()
@@ -33,6 +30,8 @@ class MPIProcess(object):
         self.algo = None
         self.weights_shapes = None
         self.weights = None
+
+        self.set_gpu(gpu)
 
         #If a parent process is indicated, process will automatically set itself up and await the signal to train
         if self.parent_rank is not None:
@@ -47,10 +46,21 @@ class MPIProcess(object):
         self.bcast_model_info( self.parent_comm )
         self.set_model_info( model_arch=self.model_arch, weights=self.weights )
 
+    def set_gpu(self,gpu):
+        if gpu is None:
+            device = 'cpu'
+        else:
+            device = 'gpu%d' % gpu
+        device = 'gpu0'
+        # configure theano to use correct device
+        os.environ['THEANO_FLAGS'] = "device=%s,floatX=float32"%device
+        #import keras function (also imports theano)
+        self.model_from_json = __import__('keras.models',fromlist=['model_from_json']).model_from_json
+
     def set_model_info(self, model_arch=None, algo=None, weights=None):
         if model_arch is not None:
             self.model_arch = model_arch
-            self.model = model_from_json( self.model_arch )
+            self.model = self.model_from_json( self.model_arch )
         if algo is not None:
             self.algo = algo
         if weights is not None:
