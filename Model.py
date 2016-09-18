@@ -1,11 +1,14 @@
+### Predefined Keras models
+
 from keras.models import Sequential
 from keras.layers import Dense, Activation
 
 def make_model(model_name):
+    """Constructs the Keras model indicated by model_name"""
     return model_maker_dict[model_name]()
 
 def make_example_model():
-    '''Sample model from keras documentation'''
+    """Example model from keras documentation"""
     model = Sequential()
     model.add(Dense(output_dim=64, input_dim=100))
     model.add(Activation("relu"))
