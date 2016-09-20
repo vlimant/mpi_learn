@@ -21,48 +21,45 @@ for try_num in range(10):
         sleep(0.1)
 
 from mpi_tools.MPIManager import MPIManager
-from mpi_tools.Algo import Algo
-import Model
+import Algo
+
+def load_model(model_name):
+    """Loads model architecture from <model_name>_arch.json and gets model weights from
+        <model_name_weights.h5"""
+    json_filename = "%s_arch.json" % model_name
+    with open( json_filename ) as arch_file:
+        model = model_from_json( arch_file.readline() ) 
+    weights_filename = "%s_weights.h5" % model_name
+    model.load_weights( weights_filename )
+    return model
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('model_name', help=('will load model architecture from '
+                                            '<model_name>_arch.json and weights from '
+                                            '<model_name>_weights.h5'))
+    parser.add_argument('data', help='text file listing data inputs')
     parser.add_argument('--masters', help='number of master processes', default=1, type=int)
-    parser.add_argument('--steps', help='number of training steps', default=10, type=int)
-    parser.add_argument('--load-model', dest='model_to_load', 
-            help=('load model architecture from <model_name>_arch.json and weights from '
-                    '<model_name>_weights.h5'))
-    parser.add_argument('--build-model', dest='model_to_build', 
-            help='Name of predefined model to construct')
+    parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
+    parser.add_argument('--batch', help='batch size', default=100, type=int)
     args = parser.parse_args()
-    model_to_load = args.model_to_load
-    model_to_build = args.model_to_build
-    if not (model_to_load is not None or model_to_build is not None):
-        sys.exit("Please specify either --load-model <name> or --build-model <name>")
+    model_name = args.model_name
 
+    with open(args.data) as data_list_file:
+        data_list = [ s.strip() for s in data_list_file.readlines() ]
+
+    # Creating the MPIManager object causes all needed worker and master nodes to be created
     comm = MPI.COMM_WORLD.Dup()
-    manager = MPIManager( comm=comm, num_masters=args.masters, train_steps=args.steps )
+    manager = MPIManager( comm=comm, batch_size=args.batch, num_epochs=args.epochs, 
+            data_list=data_list, num_masters=args.masters )
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
 
-        # There are two options for creating the model:
-        # 1) Load architecture from <model>_arch.json and weights from <model>_weights.h5
-        # 2) Build the model from one of the presets in Model.py
-
-        if model_to_load is not None:
-            json_filename = "%s_arch.json" % model_to_load
-            with open( json_filename ) as arch_file:
-                model = model_from_json( arch_file.readline() )
-            weights_filename = "%s_weights.h5" % model_to_load
-            model.load_weights( weights_filename )
-        elif model_to_build is not None:
-            model = Model.make_model( model_to_build )
-        else:
-            print "Model not defined.  Doing nothing.  (execution should not reach here)"
-            manager.free_comms()
+        model = load_model(model_name)
 
         model_arch = model.to_json()
-        algo = Algo()
+        algo = Algo.Algo() #this is a placeholder currently
         weights = model.get_weights()
 
         manager.process.set_model_info( model_arch, algo, weights )

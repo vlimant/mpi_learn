@@ -6,6 +6,7 @@ import numpy as np
 from mpi4py import MPI
 import theano.sandbox.cuda
 from keras.models import model_from_json
+from keras.optimizers import SGD
 
 from mpi_tools.Utils import Error, weights_from_shapes, shapes_from_weights
 
@@ -23,6 +24,7 @@ class MPIProcess(object):
            algo: Algo object defining how to optimize model weights
            weights_shapes: list of tuples indicating the shape of each layer of the model
            weights: list of numpy arrays storing the last weights received from the parent
+           gradient: latest gradient obtained from training
     """
 
     def __init__(self, parent_comm, parent_rank=None, gpu=None):
@@ -44,6 +46,7 @@ class MPIProcess(object):
         self.algo = None
         self.weights_shapes = None
         self.weights = None
+        self.gradient = None
 
         self.set_gpu(gpu)
 
@@ -82,6 +85,7 @@ class MPIProcess(object):
             self.weights = weights
             self.weights_shapes = shapes_from_weights( self.weights )
             self.model.set_weights(self.weights)
+            self.gradient = weights_from_shapes( self.weights_shapes )
 
     def check_sanity(self):
         """Throws an exception if any model attribute has not been set yet."""
@@ -98,13 +102,15 @@ class MPIProcess(object):
     # This dict associates message strings with integers to be passed as MPI tags.
     tag_lookup = {
             'any':          MPI.ANY_SOURCE,
-            'train':         0,
-            'exit':          1,
-            'expect_weights':2,
-            'model_arch':    10,
-            'algo':          11,
-            'weights_shapes':12,
-            'weights':       13,
+            'train':          0,
+            'exit':           1,
+            'expect_weights': 2,
+            'expect_gradient':3,
+            'model_arch':     10,
+            'algo':           11,
+            'weights_shapes': 12,
+            'weights':        13,
+            'gradient':       14,
             }
     # This dict is for reverse tag lookups.
     inv_tag_lookup = { value:key for key,value in tag_lookup.iteritems() }
@@ -189,18 +195,41 @@ class MPIProcess(object):
         if self.parent_rank is not None:
             self.send( None, 'exit' )
 
+    def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None):
+        """Send a list of numpy arrays to the process specified by comm (MPI communicator) and dest (rank).
+            We first send expect_tag to tell the dest process that we are sending several buffer objects,
+            then send the objects layer by layer."""
+        self.send( None, expect_tag, comm=comm, dest=dest )
+        for w in obj:
+            self.send( w, tag, comm=comm, dest=dest, buffer=True )
+
     def send_weights(self, comm=None, dest=None):
         """Send NN weights to the process specified by comm (MPI communicator) and dest (rank).
-            We first send the 'expect_weights' tag to signal that we are sending weights,
-            and then send the weights layer by layer."""
-        self.send( None, 'expect_weights', comm=comm, dest=dest )
-        for w in self.weights:
-            self.send( w, 'weights', comm=comm, dest=dest, buffer=True )
+            Before sending the weights we first send the tag 'expect_weights'."""
+        self.send_arrays( self.weights, expect_tag='expect_weights', tag='weights', 
+                comm=comm, dest=dest )
+
+    def send_gradient(self, comm=None, dest=None):
+        """Send gradient to the process specified by comm (MPI communicator) and dest (rank).
+            Before sending the gradient we first send the tag 'expect_gradient'"""
+        self.send_arrays( self.gradient, expect_tag='expect_gradient', tag='gradient', 
+                comm=comm, dest=dest )
+
+    def recv_arrays(self, obj, tag, comm=None, source=None):
+        """Receive a list of numpy arrays from the process specified by comm (MPI communicator) 
+            and dest (rank).
+              obj: list of destination arrays 
+              tag: MPI tag accompanying the message"""
+        for w in obj:
+            self.recv( w, tag, comm=comm, source=source, buffer=True )
 
     def recv_weights(self, comm=None, source=None):
-        """Receive NN weights layer by layer from the process specified by comm and dest."""
-        for w in self.weights:
-            self.recv( w, 'weights', comm=comm, source=source, buffer=True )
+        """Receive NN weights layer by layer from the process specified by comm and source"""
+        self.recv_arrays( self.weights, tag='weights', comm=comm, source=source )
+
+    def recv_gradient(self, comm=None, source=None):
+        """Receive gradient layer by layer from the process specified by comm and source"""
+        self.recv_arrays( self.gradient, tag='gradient', comm=comm, source=source )
 
     def bcast_weights(self, comm, root=0):
         """Broadcast weights layer by layer on communicator comm from the indicated root rank"""
@@ -220,35 +249,52 @@ class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent.
 
         Attributes:
-          train_steps: integer indicating number of training steps to perform
+          num_epochs: integer giving the number of epochs to train for
+          data: a Data object providing a generator for training data
     """
 
-    def __init__(self, parent_comm, parent_rank=None, train_steps=0):
-        """Raises an exception if no parent rank is provided. Sets the number of training steps
-            using the argument provided, then calls the parent constructor with parent_comm 
-            and parent_rank."""
+    def __init__(self, data, parent_comm, parent_rank=None, num_epochs=1):
+        """Raises an exception if no parent rank is provided. Sets the Data object and 
+            number of epochs using the argument provided, then calls the parent constructor 
+            with parent_comm and parent_rank."""
         if parent_rank is None:
             raise Error("MPIWorker initialized without parent rank")
-        self.train_steps = train_steps
+        self.num_epochs = num_epochs
+        self.data = data
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
         print info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size())
         super(MPIWorker, self).__init__( parent_comm, parent_rank )
 
     def train(self):
-        """After receiving the 'train' signal from the parent, train the model for train_steps steps.
+        """Compile the model, then wait for the signal to train. Then train for num_epochs epochs.
             In each step, train on one batch of input data, then send the gradient to the master
-            and weight to receive a new set of weights.  When done, send 'exit' signal to parent.
+            and wait to receive a new set of weights.  When done, send 'exit' signal to parent.
         """
         self.check_sanity()
+        self.compile_model()
         self.await_signal_from_parent()
-        print "MPIWorker %d beginning training" % self.rank
-        for step in range(self.train_steps):
-            #pretend to train
-            time.sleep(3)
-            self.send_weights()
-            self.recv_weights()
+        for epoch in range(self.num_epochs):
+            print "MPIWorker %d beginning epoch %d" % (self.rank, epoch)
+            for batch in self.data.generate_data():
+                #self.model.train_on_batch( batch[0], batch[1] )
+                self.compute_gradient()
+                self.send_gradient()
+                self.recv_weights()
         print "MPIWorker %d signing off" % self.rank
         self.send_exit_to_parent()
+
+    def compile_model(self):
+        """Compile the model. Workers are only responsible for computing the gradient and 
+            sending it to the master, so we use ordinary SGD with learning rate 1 and 
+            compute the gradient as (new weights - old weights) after each batch"""
+        sgd = SGD(lr=1.0)
+        #self.model.compile( loss='categorical_crossentropy', optimizer=SGD )
+
+    def compute_gradient(self):
+        """Compute the gradient from the new and old sets of model weights"""
+        self.gradient = []
+        for i in range(len(self.weights_shapes)):
+            self.gradient.append( np.subtract( self.model.get_weights()[i], self.weights[i] ) )
 
     def await_signal_from_parent(self):
         """Wait for 'train' signal from parent process"""
@@ -274,8 +320,8 @@ class MPIMaster(MPIProcess):
         if parent_rank is not None:
             self.has_parent = True
         self.num_workers = child_comm.Get_size() - 1 #all processes but one are workers
-        info = ("Creating MPIMaster with rank {0} and parent rank. "
-                "(Communicator size {1}, Child communicator size {2})")
+        info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
+                "(Communicator size {2}, Child communicator size {3})")
         print info.format(parent_comm.Get_rank(),parent_rank,parent_comm.Get_size(), 
                 child_comm.Get_size())
         super(MPIMaster, self).__init__( parent_comm, parent_rank )
@@ -284,17 +330,17 @@ class MPIMaster(MPIProcess):
         """Extracts message source and tag from the MPI status object and processes the message. 
             Returns the tag of the message received.
             Possible messages are:
-            -expect_weights: worker is ready to send a new set of weights
+            -expect_gradient: worker is ready to send a new gradient
             -exit: worker is done training and will shut down
         """
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
-        if tag == 'expect_weights':
-            self.recv_weights( source=source, comm=self.child_comm )
-            self.apply_update( self.new_weights )
+        if tag == 'expect_gradient':
+            self.recv_gradient( source=source, comm=self.child_comm )
+            self.apply_update()
             self.send_weights( dest=source, comm=self.child_comm )
             if self.has_parent:
-                self.send_weights()
+                self.send_gradient()
                 self.recv_weights()
         elif tag == 'exit':
             self.running_workers -= 1 
@@ -312,7 +358,6 @@ class MPIMaster(MPIProcess):
         self.signal_children()
 
         status = MPI.Status()
-        self.new_weights = weights_from_shapes( self.weights_shapes )
         self.running_workers = self.num_workers
         
         while self.running_workers > 0:
@@ -321,7 +366,7 @@ class MPIMaster(MPIProcess):
         print "MPIMaster %d done training" % self.rank
         self.send_exit_to_parent()
 
-    def apply_update(self, new_weights):
+    def apply_update(self):
         '''PLACEHOLDER'''
         pass
 

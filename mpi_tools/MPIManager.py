@@ -1,7 +1,9 @@
 ### MPIManager class 
 
 from __future__ import division
+
 from MPIProcess import MPIWorker, MPIMaster
+from Data import H5Data
 
 class MPIManager(object):
     """The MPIManager class defines the topology of the MPI process network
@@ -12,28 +14,45 @@ class MPIManager(object):
           2) one master and N-1 workers, where N is the number of MPI processes
 
         Attributes:
+          process: the MPI worker or master object running on this process
           num_masters: integer indicating the number of master processes.  
             If num_masters > 1, an additional master will be created to supervise all masters.
-          train_steps: integer indicateing the number of steps each worker should train for.
+          num_workers: integer indicating the number of worker processes
+          worker_id: ID of worker node, used for indexing training data files
+          batch_size (integer): number of training examples workers process at once
+          num_epochs (integer): number of times to iterate over the training data
           comm_block: MPI intracommunicator used for message passing between master and workers.
             Process 0 is the master and the other processes are workers.  
           comm_masters: MPI intracommunicator used for message passing between masters.
             (It will be None if there is only one master.)
+          data_list: list of training data file names
+          is_master: boolean determining if this process is a master
     """
 
-    def __init__(self, comm, num_masters, train_steps):
+    def __init__(self, comm, batch_size, num_epochs, data_list, num_masters=1):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
             Params: 
             comm: MPI intracommunicator containing all processes
             num_masters: number of master processes
-            train_steps: number of steps to train for
+            batch_size: number of training examples to process at once
+            num_epochs: number of times to iterate over the training data
+            data_list: list of input data files
         """
         self.num_masters = num_masters
-        self.train_steps = train_steps
+        self.num_workers = comm.Get_size() - self.num_masters 
+        if self.num_masters > 1:
+            self.num_workers -= 1 # one process is taken up by the super-master
+        self.worker_id = -1
+
+        self.batch_size = batch_size
+        self.num_epochs = num_epochs
+        self.data_list = data_list
         self.comm_block = None
         self.comm_masters = None
+        self.is_master = None
+
         self.make_comms(comm)
 
     def make_comms(self,comm):
@@ -41,33 +60,58 @@ class MPIManager(object):
             Set comm_block to contain one master and all of its workers.
             Set comm_masters to contain all masters, including the "super-master" supervising them.
             Define a master or worker object as appropriate for each process.
+            If a worker is created, it is assigned some data files to train on.
         """
+        # For masters we let child_comm be the communicator used to message the node's 
+        # children, and parent_comm be that used to message the node's parents.
+
+        parent_rank = 0
+
         # Case (1)
         if self.num_masters > 1:
             self.make_comms_many(comm)
             if self.is_master:
+                parent_comm = self.comm_masters
                 if self.comm_masters.Get_rank() == 0: # rank 0 is the super-master
-                    self.process = MPIMaster( self.comm_masters, parent_rank=None, 
-                            child_comm=self.comm_masters )
+                    child_comm = self.comm_masters
+                    parent_rank = None
                 else:
-                    self.process = MPIMaster( self.comm_masters, parent_rank=0, 
-                            child_comm=self.comm_block )
-            else:
-                self.process = MPIWorker( self.comm_block, parent_rank=0, 
-                        train_steps=self.train_steps )
+                    child_comm = self.comm_block
         # Case (2)
         else:
             self.make_comm_single(comm)
             if self.is_master:
-                self.process = MPIMaster( self.comm_block, parent_rank=None, child_comm=self.comm_block )
-            else:
-                self.process = MPIWorker( self.comm_block, parent_rank=0, train_steps=self.train_steps )
+                parent_comm = self.comm_block
+                child_comm = self.comm_block
+                parent_rank = None
+
+        # Process initialization
+        if self.is_master:
+            self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
+                    child_comm=child_comm )
+        else:
+            data = self.make_data()
+            self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=parent_rank, 
+                    num_epochs=self.num_epochs, data=data )
+
+    def make_data(self):
+        """Creates and returns the data object associated with the current MPI process"""
+        files_per_worker = len(self.data_list) // self.num_workers
+        files_for_this_worker = self.data_list[ 
+                self.worker_id*files_per_worker : (self.worker_id+1)*files_per_worker ]
+        # The worker takes an extra file if needed
+        if self.worker_id < len(self.data_list) % self.num_workers:
+            files_for_this_worker.append(self.data_list[ self.num_workers*files_per_worker + self.worker_id ])
+        print "Files for worker %d:" % self.comm_block.Get_rank()
+        for f in files_for_this_worker:
+            print "  %s" % f
+        return H5Data( files_for_this_worker, self.batch_size )
 
     def make_comms_many(self,comm):
         """Create MPI communicators (Case 1):
             Rank 0 of comm_block is the master, other ranks are workers.
             Rank 0 of comm_master is the super-master, other ranks are sub-masters.
-            is_master is defined according to whether this process is a master or a worker."""
+            Sets is_master and worker_id attributes."""
 
         # Create a communicator containing all processes except the first.  
         # Then divide that communicator into blocks, each with one master
@@ -83,12 +127,18 @@ class MPIManager(object):
         ranks_mastergroup = [0]+range(1, comm.Get_size(), (comm.Get_size()-1) // self.num_masters)
         self.comm_masters = comm.Create( comm.Get_group().Incl(ranks_mastergroup) )
         self.is_master = ( comm.Get_rank() in ranks_mastergroup )
+        # Get the worker ID
+        ranks_workergroup = [ x for x in range(comm.Get_size()) if x not in ranks_mastergroup ]
+        if not self.is_master:
+            self.worker_id = ranks_workergroup.index( comm.Get_rank() )
 
     def make_comm_single(self,comm):
-        """Create MPI communicator (Case 2):
-             Rank 0 is master, all others are workers"""
+        """Create MPI communicator (Case 2): Rank 0 is master, all others are workers
+            Sets is_master and worker_id attributes"""
         self.comm_block = comm.Dup()
         self.is_master = ( self.comm_block.Get_rank() == 0 )
+        if not self.is_master:
+            self.worker_id = self.comm_block.Get_rank() - 1
 
     def free_comms(self):
         """Free active MPI communicators"""
