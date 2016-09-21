@@ -4,7 +4,7 @@
 
 import argparse
 
-from test.Models import Models
+from test.Models import make_model
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -12,7 +12,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     model_name = args.model_name
 
-    model = Models.make_model( model_name )
+    model = make_model( model_name )
 
     weights_filename = "%s_weights.h5" % model_name 
     model.save_weights( weights_filename, overwrite=True )

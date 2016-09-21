@@ -21,7 +21,7 @@ for try_num in range(10):
         sleep(0.1)
 
 from mpi_tools.MPIManager import MPIManager
-import Algo
+from Algo import VanillaSGD
 
 def load_model(model_name):
     """Loads model architecture from <model_name>_arch.json and gets model weights from
@@ -38,20 +38,24 @@ if __name__ == '__main__':
     parser.add_argument('model_name', help=('will load model architecture from '
                                             '<model_name>_arch.json and weights from '
                                             '<model_name>_weights.h5'))
-    parser.add_argument('data', help='text file listing data inputs')
+    parser.add_argument('train_data', help='text file listing data inputs for training')
+    parser.add_argument('val_data', help='text file listing data inputs for validation')
     parser.add_argument('--masters', help='number of master processes', default=1, type=int)
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--batch', help='batch size', default=100, type=int)
+    parser.add_argument('--learning-rate', help='learning rate for SGD', default=0.01, type=float)
     args = parser.parse_args()
     model_name = args.model_name
 
-    with open(args.data) as data_list_file:
-        data_list = [ s.strip() for s in data_list_file.readlines() ]
+    with open(args.train_data) as train_list_file:
+        train_list = [ s.strip() for s in train_list_file.readlines() ]
+    with open(args.val_data) as val_list_file:
+        val_list = [ s.strip() for s in val_list_file.readlines() ]
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     comm = MPI.COMM_WORLD.Dup()
     manager = MPIManager( comm=comm, batch_size=args.batch, num_epochs=args.epochs, 
-            data_list=data_list, num_masters=args.masters )
+            train_list=train_list, val_list=val_list, num_masters=args.masters )
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
@@ -59,7 +63,7 @@ if __name__ == '__main__':
         model = load_model(model_name)
 
         model_arch = model.to_json()
-        algo = Algo.Algo() #this is a placeholder currently
+        algo = VanillaSGD( loss='categorical_crossentropy', learning_rate=args.learning_rate )
         weights = model.get_weights()
 
         manager.process.set_model_info( model_arch, algo, weights )

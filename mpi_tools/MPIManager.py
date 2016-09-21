@@ -25,11 +25,13 @@ class MPIManager(object):
             Process 0 is the master and the other processes are workers.  
           comm_masters: MPI intracommunicator used for message passing between masters.
             (It will be None if there is only one master.)
-          data_list: list of training data file names
+          train_list: list of training data file names
+          val_list: list of validation data file names
           is_master: boolean determining if this process is a master
+          should_validate: boolean determining if this process should run training validation
     """
 
-    def __init__(self, comm, batch_size, num_epochs, data_list, num_masters=1):
+    def __init__(self, comm, batch_size, num_epochs, train_list, val_list, num_masters=1):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -38,7 +40,8 @@ class MPIManager(object):
             num_masters: number of master processes
             batch_size: number of training examples to process at once
             num_epochs: number of times to iterate over the training data
-            data_list: list of input data files
+            train_list: list of training data files
+            val_list: list of validation data files
         """
         self.num_masters = num_masters
         self.num_workers = comm.Get_size() - self.num_masters 
@@ -48,10 +51,12 @@ class MPIManager(object):
 
         self.batch_size = batch_size
         self.num_epochs = num_epochs
-        self.data_list = data_list
+        self.train_list = train_list
+        self.val_list = val_list
         self.comm_block = None
         self.comm_masters = None
         self.is_master = None
+        self.should_validate = None
 
         self.make_comms(comm)
 
@@ -87,25 +92,35 @@ class MPIManager(object):
 
         # Process initialization
         if self.is_master:
+            val_data = self.make_val_data()
             self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
-                    child_comm=child_comm )
+                    data=val_data, child_comm=child_comm )
         else:
-            data = self.make_data()
+            train_data = self.make_train_data()
             self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=parent_rank, 
-                    num_epochs=self.num_epochs, data=data )
+                    num_epochs=self.num_epochs, data=train_data )
 
-    def make_data(self):
-        """Creates and returns the data object associated with the current MPI process"""
-        files_per_worker = len(self.data_list) // self.num_workers
-        files_for_this_worker = self.data_list[ 
+    def make_train_data(self):
+        """Creates and returns the train data object associated with the current MPI process"""
+        files_per_worker = len(self.train_list) // self.num_workers
+        files_for_this_worker = self.train_list[ 
                 self.worker_id*files_per_worker : (self.worker_id+1)*files_per_worker ]
         # The worker takes an extra file if needed
-        if self.worker_id < len(self.data_list) % self.num_workers:
-            files_for_this_worker.append(self.data_list[ self.num_workers*files_per_worker + self.worker_id ])
+        if self.worker_id < len(self.train_list) % self.num_workers:
+            files_for_this_worker.append(self.train_list[ self.num_workers*files_per_worker + self.worker_id ])
         print "Files for worker %d:" % self.comm_block.Get_rank()
         for f in files_for_this_worker:
             print "  %s" % f
         return H5Data( files_for_this_worker, self.batch_size )
+
+    def make_val_data(self):
+        """Creates and returns the validation data object associated with the current MPI process
+            (only the master process has validation data associated with it)"""
+        if not self.should_validate: return None
+        print "Files for validation:" 
+        for f in self.val_list:
+            print "  %s" % f
+        return H5Data( self.val_list, self.batch_size )
 
     def make_comms_many(self,comm):
         """Create MPI communicators (Case 1):
@@ -118,7 +133,8 @@ class MPIManager(object):
         ranks_excludefirstprocess = range(1,comm.Get_size()) 
         comm_excludefirstprocess = comm.Create( comm.Get_group().Incl( ranks_excludefirstprocess ) )
         if comm.Get_rank() in ranks_excludefirstprocess:
-            color_block = comm_excludefirstprocess.Get_rank() // self.num_masters 
+            size_block = (comm.Get_size()-1) // self.num_masters
+            color_block = comm_excludefirstprocess.Get_rank() // size_block
             self.comm_block = comm_excludefirstprocess.Split( color_block )
             comm_excludefirstprocess.Free()
         else:
@@ -127,6 +143,7 @@ class MPIManager(object):
         ranks_mastergroup = [0]+range(1, comm.Get_size(), (comm.Get_size()-1) // self.num_masters)
         self.comm_masters = comm.Create( comm.Get_group().Incl(ranks_mastergroup) )
         self.is_master = ( comm.Get_rank() in ranks_mastergroup )
+        self.should_validate = ( comm.Get_rank() == 0 )
         # Get the worker ID
         ranks_workergroup = [ x for x in range(comm.Get_size()) if x not in ranks_mastergroup ]
         if not self.is_master:
@@ -137,6 +154,7 @@ class MPIManager(object):
             Sets is_master and worker_id attributes"""
         self.comm_block = comm.Dup()
         self.is_master = ( self.comm_block.Get_rank() == 0 )
+        self.should_validate = self.is_master
         if not self.is_master:
             self.worker_id = self.comm_block.Get_rank() - 1
 

@@ -25,9 +25,10 @@ class MPIProcess(object):
            weights_shapes: list of tuples indicating the shape of each layer of the model
            weights: list of numpy arrays storing the last weights received from the parent
            gradient: latest gradient obtained from training
+           data: Data object used to generate training or validation data
     """
 
-    def __init__(self, parent_comm, parent_rank=None, gpu=None):
+    def __init__(self, parent_comm, parent_rank=None, gpu=None, data=None):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, model information should be set manually
             with set_model_info() and training should be launched with train().
@@ -37,10 +38,12 @@ class MPIProcess(object):
               parent_rank (integer): rank of this node's parent in parent_comm
               gpu: integer indicating which GPU should be used with Theano 
                     (None if cpu should be used)
+              data: Data object used to generate training or validation data
         """
         self.parent_comm = parent_comm 
         self.parent_rank = parent_rank
         self.rank = parent_comm.Get_rank()
+        self.data = data
         self.model = None
         self.model_arch = None
         self.algo = None
@@ -70,7 +73,6 @@ class MPIProcess(object):
             device = 'cpu'
         else:
             device = 'gpu%d' % gpu
-        #device = 'gpu0' ###TODO: this is temporary, remove it
         theano.sandbox.cuda.use(device)
 
     def set_model_info(self, model_arch=None, algo=None, weights=None):
@@ -96,6 +98,13 @@ class MPIProcess(object):
     def train(self):
         """To be implemented in derived classes"""
         raise NotImplementedError
+
+    def compile_model(self):
+        """Compile the model. Workers are only responsible for computing the gradient and 
+            sending it to the master, so we use ordinary SGD with learning rate 1 and 
+            compute the gradient as (new weights - old weights) after each batch"""
+        sgd = SGD(lr=1.0)
+        self.model.compile( loss=self.algo.loss, optimizer=sgd )
 
     ### MPI-related functions below ###
 
@@ -250,20 +259,17 @@ class MPIWorker(MPIProcess):
 
         Attributes:
           num_epochs: integer giving the number of epochs to train for
-          data: a Data object providing a generator for training data
     """
 
     def __init__(self, data, parent_comm, parent_rank=None, num_epochs=1):
-        """Raises an exception if no parent rank is provided. Sets the Data object and 
-            number of epochs using the argument provided, then calls the parent constructor 
-            with parent_comm and parent_rank."""
+        """Raises an exception if no parent rank is provided. Sets the number of epochs 
+            using the argument provided, then calls the parent constructor"""
         if parent_rank is None:
             raise Error("MPIWorker initialized without parent rank")
         self.num_epochs = num_epochs
-        self.data = data
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
         print info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size())
-        super(MPIWorker, self).__init__( parent_comm, parent_rank )
+        super(MPIWorker, self).__init__( parent_comm, parent_rank, data=data )
 
     def train(self):
         """Compile the model, then wait for the signal to train. Then train for num_epochs epochs.
@@ -276,19 +282,18 @@ class MPIWorker(MPIProcess):
         for epoch in range(self.num_epochs):
             print "MPIWorker %d beginning epoch %d" % (self.rank, epoch)
             for batch in self.data.generate_data():
-                #self.model.train_on_batch( batch[0], batch[1] )
+                self.train_on_batch(batch)
                 self.compute_gradient()
                 self.send_gradient()
                 self.recv_weights()
         print "MPIWorker %d signing off" % self.rank
         self.send_exit_to_parent()
 
-    def compile_model(self):
-        """Compile the model. Workers are only responsible for computing the gradient and 
-            sending it to the master, so we use ordinary SGD with learning rate 1 and 
-            compute the gradient as (new weights - old weights) after each batch"""
-        sgd = SGD(lr=1.0)
-        #self.model.compile( loss='categorical_crossentropy', optimizer=SGD )
+    def train_on_batch(self, batch):
+        """Train on a single batch"""
+        train_loss = self.model.train_on_batch( batch[0], batch[1] )
+        if self.rank == 1:
+            print "Training loss:",train_loss
 
     def compute_gradient(self):
         """Compute the gradient from the new and old sets of model weights"""
@@ -308,14 +313,22 @@ class MPIMaster(MPIProcess):
           child_comm: MPI intracommunicator used to communicate with child processes
           has_parent: boolean indicating if this process has a parent process
           num_workers: integer giving the number of workers that work for this master
+          num_updates: number of weight updates received from workers
+          validate_every: how many updates to wait between validations
+          val_samples: number of samples to validate on
     """
 
-    def __init__(self, parent_comm, parent_rank=None, child_comm=None):
+    def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
+            validate_every=10, val_samples=1000):
         """Parameters:
-              child_comm: MPI communicator used to contact children"""
+              child_comm: MPI communicator used to contact children
+              validate_every: how many updates to wait between validations
+              val_samples: how many samples to validate on"""
         if child_comm is None:
             raise Error("MPIMaster initialized without child communicator")
         self.child_comm = child_comm
+        self.validate_every = validate_every
+        self.val_samples = val_samples
         self.has_parent = False
         if parent_rank is not None:
             self.has_parent = True
@@ -324,7 +337,7 @@ class MPIMaster(MPIProcess):
                 "(Communicator size {2}, Child communicator size {3})")
         print info.format(parent_comm.Get_rank(),parent_rank,parent_comm.Get_size(), 
                 child_comm.Get_size())
-        super(MPIMaster, self).__init__( parent_comm, parent_rank )
+        super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data )
 
     def process_message(self, status):
         """Extracts message source and tag from the MPI status object and processes the message. 
@@ -338,6 +351,7 @@ class MPIMaster(MPIProcess):
         if tag == 'expect_gradient':
             self.recv_gradient( source=source, comm=self.child_comm )
             self.apply_update()
+            self.num_updates += 1
             self.send_weights( dest=source, comm=self.child_comm )
             if self.has_parent:
                 self.send_gradient()
@@ -355,20 +369,34 @@ class MPIMaster(MPIProcess):
         """
         self.check_sanity()
         self.bcast_model_info( comm=self.child_comm )
+        self.compile_model()
         self.signal_children()
 
         status = MPI.Status()
         self.running_workers = self.num_workers
         
+        self.num_updates = 0
         while self.running_workers > 0:
             self.recv_any_from_child(status)
             self.process_message( status )
+            if self.num_updates >= self.validate_every:
+                self.validate()
         print "MPIMaster %d done training" % self.rank
         self.send_exit_to_parent()
 
+    def validate(self):
+        """Reset the updates counter and compute the loss on the validation data"""
+        print "Performing validation..."
+        self.num_updates = 0
+        self.model.set_weights(self.weights)
+        val_loss = self.model.evaluate_generator( self.data.generate_data(),
+                val_samples=self.val_samples )
+        print "Validation loss:",val_loss
+
+
     def apply_update(self):
-        '''PLACEHOLDER'''
-        pass
+        """Updates weights according to gradient received from worker process"""
+        self.weights = self.algo.apply_update( self.weights, self.gradient )
 
     ### MPI-related functions below
 
