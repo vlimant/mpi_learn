@@ -2,8 +2,40 @@
 
 from __future__ import division
 
-from MPIProcess import MPIWorker, MPIMaster
 from Data import H5Data
+from GPU import get_num_gpus
+
+def get_master_ranks(comm, num_masters=1):
+    """Arguments: 
+        comm: MPI intracommunicator containing all processes
+        num_masters: number of processes that will be assigned as masters
+       Returns:
+        a list of integers corresponding to the MPI ranks that will be assigned as masters"""
+    if num_masters > 1:
+        return [0]+range(1, comm.Get_size(), (comm.Get_size()-1) // num_masters)
+    return [0]
+
+def get_worker_ranks(comm, num_masters=1):
+    """Arguments:
+        comm: MPI intracommunicator containing all processes
+        num_masters: number of processes that will be assigned as masters
+       Returns:
+        a list of integers corresponding to the MPI ranks that will be assigned as workers"""
+    master_ranks = get_master_ranks( comm, num_masters )
+    return [ x for x in range(comm.Get_size()) if x not in master_ranks ]
+
+def get_device(comm, num_masters=1):
+    rank = comm.Get_rank()
+    worker_ranks = get_worker_ranks( comm, num_masters )
+    if rank in worker_ranks:
+        worker_id = worker_ranks.index( rank )
+    else:
+        worker_id = -1
+    max_gpu = get_num_gpus() - 1
+    if worker_id < 0 or worker_id > max_gpu:
+        return 'cpu'
+    else:
+        return 'gpu%d' % worker_id
 
 class MPIManager(object):
     """The MPIManager class defines the topology of the MPI process network
@@ -91,6 +123,7 @@ class MPIManager(object):
                 parent_rank = None
 
         # Process initialization
+        from MPIProcess import MPIWorker, MPIMaster
         if self.is_master:
             val_data = self.make_val_data()
             self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
@@ -140,12 +173,12 @@ class MPIManager(object):
         else:
             self.comm_block = None
         # Create a communicator containing all masters
-        ranks_mastergroup = [0]+range(1, comm.Get_size(), (comm.Get_size()-1) // self.num_masters)
+        ranks_mastergroup = get_master_ranks( comm, self.num_masters )
         self.comm_masters = comm.Create( comm.Get_group().Incl(ranks_mastergroup) )
         self.is_master = ( comm.Get_rank() in ranks_mastergroup )
         self.should_validate = ( comm.Get_rank() == 0 )
         # Get the worker ID
-        ranks_workergroup = [ x for x in range(comm.Get_size()) if x not in ranks_mastergroup ]
+        ranks_workergroup = get_worker_ranks( comm, self.num_masters )
         if not self.is_master:
             self.worker_id = ranks_workergroup.index( comm.Get_rank() )
 

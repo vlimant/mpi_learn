@@ -3,24 +3,12 @@
 ### This script creates a Keras model and a Manager object that handles distributed training.
 
 import sys
-from os.path import isfile
 import numpy as np
 import argparse
 from mpi4py import MPI
 from time import sleep
 
-# There is an issue when multiple processes import Keras simultaneously --
-# the file .keras/keras.json is sometimes not read correctly.  
-# as a workaround, just try several times to import keras
-for try_num in range(10):
-    try:
-        from keras.models import model_from_json
-        break
-    except ValueError:
-        print "Unable to import keras. Trying again: %d" % try_num
-        sleep(0.1)
-
-from mpi_tools.MPIManager import MPIManager
+from mpi_tools.MPIManager import MPIManager, get_device
 from Algo import VanillaSGD
 
 def load_model(model_name):
@@ -44,6 +32,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--batch', help='batch size', default=100, type=int)
     parser.add_argument('--learning-rate', help='learning rate for SGD', default=0.01, type=float)
+    parser.add_argument('--cpu', help='do not use gpu even if available', action='store_true')
     args = parser.parse_args()
     model_name = args.model_name
 
@@ -52,8 +41,31 @@ if __name__ == '__main__':
     with open(args.val_data) as val_list_file:
         val_list = [ s.strip() for s in val_list_file.readlines() ]
 
-    # Creating the MPIManager object causes all needed worker and master nodes to be created
     comm = MPI.COMM_WORLD.Dup()
+    # We have to assign GPUs to processes before importing Theano.
+    if args.cpu:
+        device = 'cpu'
+    else: 
+        device = get_device( comm, args.masters )
+    print "Process",comm.Get_rank(),"using device",device
+    import theano.sandbox.cuda
+    theano.sandbox.cuda.use( device )
+    import theano
+
+    # There is an issue when multiple processes import Keras simultaneously --
+    # the file .keras/keras.json is sometimes not read correctly.  
+    # as a workaround, just try several times to import keras.
+    # Note: importing keras imports theano -- 
+    # impossible to change GPU choice after this.
+    for try_num in range(10):
+        try:
+            from keras.models import model_from_json
+            break
+        except ValueError:
+            print "Unable to import keras. Trying again: %d" % try_num
+            sleep(0.1)
+
+    # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, batch_size=args.batch, num_epochs=args.epochs, 
             train_list=train_list, val_list=val_list, num_masters=args.masters )
 

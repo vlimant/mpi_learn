@@ -4,7 +4,6 @@ import time
 import os,sys
 import numpy as np
 from mpi4py import MPI
-import theano.sandbox.cuda
 from keras.models import model_from_json
 from keras.optimizers import SGD
 
@@ -28,7 +27,7 @@ class MPIProcess(object):
            data: Data object used to generate training or validation data
     """
 
-    def __init__(self, parent_comm, parent_rank=None, gpu=None, data=None):
+    def __init__(self, parent_comm, parent_rank=None, data=None):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, model information should be set manually
             with set_model_info() and training should be launched with train().
@@ -36,8 +35,6 @@ class MPIProcess(object):
             Parameters:
               parent_comm: MPI intracommunicator used to communicate with parent
               parent_rank (integer): rank of this node's parent in parent_comm
-              gpu: integer indicating which GPU should be used with Theano 
-                    (None if cpu should be used)
               data: Data object used to generate training or validation data
         """
         self.parent_comm = parent_comm 
@@ -51,8 +48,6 @@ class MPIProcess(object):
         self.weights = None
         self.gradient = None
 
-        self.set_gpu(gpu)
-
         if self.parent_rank is not None:
             self.initialize()
             self.train()
@@ -65,15 +60,6 @@ class MPIProcess(object):
         """Receive model, weights, and training algorithm from parent, and store them"""
         self.bcast_model_info( self.parent_comm )
         self.set_model_info( model_arch=self.model_arch, weights=self.weights )
-
-    def set_gpu(self,gpu):
-        """Configures theano to use the indicated GPU. 
-            gpu: integer indicating which GPU to use"""
-        if gpu is None:
-            device = 'cpu'
-        else:
-            device = 'gpu%d' % gpu
-        theano.sandbox.cuda.use(device)
 
     def set_model_info(self, model_arch=None, algo=None, weights=None):
         """Sets NN architecture, training algorithm, and weights.
@@ -319,7 +305,7 @@ class MPIMaster(MPIProcess):
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
-            validate_every=10, val_samples=1000):
+            validate_every=1000, val_samples=1000):
         """Parameters:
               child_comm: MPI communicator used to contact children
               validate_every: how many updates to wait between validations

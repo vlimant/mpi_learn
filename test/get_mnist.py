@@ -20,21 +20,21 @@ else:
     X_test = X_test.reshape(X_test.shape[0], img_rows, img_cols, 1)
 input_shape = (img_rows, img_cols, 1)
 
-num_train_pieces = 4
-num_test_pieces = 2
+num_train_pieces = 8
+num_test_pieces = 1
 split_X_train = [ X.astype('float32') / 255 for X in array_split(X_train, num_train_pieces) ]
 split_Y_train = [ np_utils.to_categorical(Y,10) for Y in array_split(Y_train, num_train_pieces) ]
 split_X_test = [ X.astype('float32') / 255 for X in array_split(X_test, num_test_pieces) ]
 split_Y_test = [ np_utils.to_categorical(Y,10) for Y in array_split(Y_test, num_test_pieces) ]
 
 for i in range(num_train_pieces):
-    train_outfile = h5py.File( "/data/duanders/mnist_train_%d.h5" % i, 'w' )
+    train_outfile = h5py.File( "mnist_train_%d.h5" % i, 'w' )
     train_outfile.create_dataset( "features", data=split_X_train[i] )
     train_outfile.create_dataset( "labels", data=split_Y_train[i] )
     train_outfile.close()
 
 for i in range(num_test_pieces):
-    test_outfile = h5py.File( "/data/duanders/mnist_test_%d.h5" % i, 'w' )
+    test_outfile = h5py.File( "mnist_test_%d.h5" % i, 'w' )
     test_outfile.create_dataset( "features", data=split_X_test[i] )
     test_outfile.create_dataset( "labels", data=split_Y_test[i] )
     test_outfile.close()
