@@ -2,7 +2,7 @@
 
 ### This script creates a Keras model and a Manager object that handles distributed training.
 
-import sys
+import sys,os
 import numpy as np
 import argparse
 from mpi4py import MPI
@@ -47,9 +47,10 @@ if __name__ == '__main__':
         device = 'cpu'
     else: 
         device = get_device( comm, args.masters )
+    # Compile in a different directory in order to avoid theano locks
+    compiledir = "/tmp/%s_theano_compile%s" % (os.environ['USER'],comm.Get_rank())
     print "Process",comm.Get_rank(),"using device",device
-    import theano.sandbox.cuda
-    theano.sandbox.cuda.use( device )
+    os.environ['THEANO_FLAGS'] = "device=%s,floatX=float32,base_compiledir=%s" % (device, compiledir)
     import theano
 
     # There is an issue when multiple processes import Keras simultaneously --
