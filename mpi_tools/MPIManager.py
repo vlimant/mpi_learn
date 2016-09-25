@@ -25,6 +25,10 @@ def get_worker_ranks(comm, num_masters=1):
     return [ x for x in range(comm.Get_size()) if x not in master_ranks ]
 
 def get_device(comm, num_masters=1):
+    """Arguments:
+        comm: MPI intracommunicator containing all processes
+        num_masters: number of processes that will be assigned as masters
+       Returns device name 'cpu' or 'gpuN' appropriate for use with theano"""
     rank = comm.Get_rank()
     worker_ranks = get_worker_ranks( comm, num_masters )
     if rank in worker_ranks:

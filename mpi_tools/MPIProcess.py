@@ -90,6 +90,7 @@ class MPIProcess(object):
             sending it to the master, so we use ordinary SGD with learning rate 1 and 
             compute the gradient as (new weights - old weights) after each batch"""
         sgd = SGD(lr=1.0)
+        print "Process %d compiling model" % self.rank
         self.model.compile( loss=self.algo.loss, optimizer=sgd )
 
     ### MPI-related functions below ###
