@@ -367,6 +367,8 @@ class MPIMaster(MPIProcess):
 
     def validate(self):
         """Reset the updates counter and compute the loss on the validation data"""
+        if self.has_parent:
+            return
         self.num_updates = 0
         self.model.set_weights(self.weights)
         val_loss = self.model.evaluate_generator( self.data.generate_data(),
