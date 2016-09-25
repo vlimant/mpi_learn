@@ -9,7 +9,7 @@ from mpi4py import MPI
 from time import sleep
 
 from mpi_tools.MPIManager import MPIManager, get_device
-from Algo import VanillaSGD
+from Algo import AdaDelta
 
 def load_model(model_name):
     """Loads model architecture from <model_name>_arch.json and gets model weights from
@@ -66,7 +66,7 @@ if __name__ == '__main__':
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, batch_size=args.batch, num_epochs=args.epochs, 
-            train_list=train_list, val_list=val_list, num_masters=args.masters )
+            train_list=train_list, val_list=val_list, val_samples=1000, num_masters=args.masters )
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
@@ -74,7 +74,7 @@ if __name__ == '__main__':
         model = load_model(model_name)
 
         model_arch = model.to_json()
-        algo = VanillaSGD( loss='categorical_crossentropy', learning_rate=args.learning_rate )
+        algo = AdaDelta( loss='categorical_crossentropy', validate_every=1000 )
         weights = model.get_weights()
 
         manager.process.set_model_info( model_arch, algo, weights )

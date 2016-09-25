@@ -88,10 +88,10 @@ class MPIProcess(object):
     def compile_model(self):
         """Compile the model. Workers are only responsible for computing the gradient and 
             sending it to the master, so we use ordinary SGD with learning rate 1 and 
-            compute the gradient as (new weights - old weights) after each batch"""
+            compute the gradient as (old weights - new weights) after each batch"""
         sgd = SGD(lr=1.0)
         print "Process %d compiling model" % self.rank
-        self.model.compile( loss=self.algo.loss, optimizer=sgd )
+        self.model.compile( loss=self.algo.loss, optimizer=sgd, metrics=['accuracy'] )
 
     ### MPI-related functions below ###
 
@@ -222,6 +222,7 @@ class MPIProcess(object):
     def recv_weights(self, comm=None, source=None):
         """Receive NN weights layer by layer from the process specified by comm and source"""
         self.recv_arrays( self.weights, tag='weights', comm=comm, source=source )
+        self.model.set_weights( self.weights )
 
     def recv_gradient(self, comm=None, source=None):
         """Receive gradient layer by layer from the process specified by comm and source"""
@@ -279,14 +280,13 @@ class MPIWorker(MPIProcess):
     def train_on_batch(self, batch):
         """Train on a single batch"""
         train_loss = self.model.train_on_batch( batch[0], batch[1] )
-        if self.rank == 1:
-            print "Training loss:",train_loss
+        print "Training loss:",train_loss
 
     def compute_gradient(self):
         """Compute the gradient from the new and old sets of model weights"""
         self.gradient = []
         for i in range(len(self.weights_shapes)):
-            self.gradient.append( np.subtract( self.model.get_weights()[i], self.weights[i] ) )
+            self.gradient.append( np.subtract( self.weights[i], self.model.get_weights()[i] ) )
 
     def await_signal_from_parent(self):
         """Wait for 'train' signal from parent process"""
@@ -301,21 +301,14 @@ class MPIMaster(MPIProcess):
           has_parent: boolean indicating if this process has a parent process
           num_workers: integer giving the number of workers that work for this master
           num_updates: number of weight updates received from workers
-          validate_every: how many updates to wait between validations
-          val_samples: number of samples to validate on
     """
 
-    def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
-            validate_every=1000, val_samples=1000):
+    def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None):
         """Parameters:
-              child_comm: MPI communicator used to contact children
-              validate_every: how many updates to wait between validations
-              val_samples: how many samples to validate on"""
+              child_comm: MPI communicator used to contact children"""
         if child_comm is None:
             raise Error("MPIMaster initialized without child communicator")
         self.child_comm = child_comm
-        self.validate_every = validate_every
-        self.val_samples = val_samples
         self.has_parent = False
         if parent_rank is not None:
             self.has_parent = True
@@ -366,18 +359,18 @@ class MPIMaster(MPIProcess):
         while self.running_workers > 0:
             self.recv_any_from_child(status)
             self.process_message( status )
-            if self.num_updates >= self.validate_every:
+            if self.num_updates >= self.algo.validate_every:
                 self.validate()
         print "MPIMaster %d done training" % self.rank
+        self.validate()
         self.send_exit_to_parent()
 
     def validate(self):
         """Reset the updates counter and compute the loss on the validation data"""
-        print "Performing validation..."
         self.num_updates = 0
         self.model.set_weights(self.weights)
         val_loss = self.model.evaluate_generator( self.data.generate_data(),
-                val_samples=self.val_samples )
+                val_samples=self.data.val_samples )
         print "Validation loss:",val_loss
 
 

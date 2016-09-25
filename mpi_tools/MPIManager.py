@@ -63,11 +63,12 @@ class MPIManager(object):
             (It will be None if there is only one master.)
           train_list: list of training data file names
           val_list: list of validation data file names
+          val_samples: number of samples to use for validation
           is_master: boolean determining if this process is a master
           should_validate: boolean determining if this process should run training validation
     """
 
-    def __init__(self, comm, batch_size, num_epochs, train_list, val_list, num_masters=1):
+    def __init__(self, comm, batch_size, num_epochs, train_list, val_list, val_samples, num_masters=1):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -78,6 +79,7 @@ class MPIManager(object):
             num_epochs: number of times to iterate over the training data
             train_list: list of training data files
             val_list: list of validation data files
+            val_samples: number of samples to use for validation
         """
         self.num_masters = num_masters
         self.num_workers = comm.Get_size() - self.num_masters 
@@ -89,6 +91,7 @@ class MPIManager(object):
         self.num_epochs = num_epochs
         self.train_list = train_list
         self.val_list = val_list
+        self.val_samples = val_samples
         self.comm_block = None
         self.comm_masters = None
         self.is_master = None
@@ -148,7 +151,7 @@ class MPIManager(object):
         print "Files for worker %d:" % self.comm_block.Get_rank()
         for f in files_for_this_worker:
             print "  %s" % f
-        return H5Data( files_for_this_worker, self.batch_size )
+        return H5Data( files_for_this_worker, self.batch_size, self.val_samples )
 
     def make_val_data(self):
         """Creates and returns the validation data object associated with the current MPI process
@@ -157,7 +160,7 @@ class MPIManager(object):
         print "Files for validation:" 
         for f in self.val_list:
             print "  %s" % f
-        return H5Data( self.val_list, self.batch_size )
+        return H5Data( self.val_list, self.batch_size, self.val_samples )
 
     def make_comms_many(self,comm):
         """Create MPI communicators (Case 1):
