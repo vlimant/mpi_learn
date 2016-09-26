@@ -54,10 +54,7 @@ if __name__ == '__main__':
 
     comm = MPI.COMM_WORLD.Dup()
     # We have to assign GPUs to processes before importing Theano.
-    if args.max_gpus <= 0:
-        device = 'cpu'
-    else: 
-        device = get_device( comm, args.masters, gpu_limit=args.max_gpus )
+    device = get_device( comm, args.masters, gpu_limit=args.max_gpus )
     print "Process",comm.Get_rank(),"using device",device
     os.environ['THEANO_FLAGS'] = "device=%s,floatX=float32" % (device)
     import theano
@@ -75,9 +72,9 @@ if __name__ == '__main__':
             print "Unable to import keras. Trying again: %d" % try_num
             sleep(0.1)
 
-    # Creating the MPIManager object causes all needed worker and master nodes to be created
     data = H5Data( None, batch_size=args.batch, val_samples=1000, 
             features_name=args.features_name, labels_name=args.labels_name )
+    # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
             train_list=train_list, val_list=val_list, num_masters=args.masters )
 
