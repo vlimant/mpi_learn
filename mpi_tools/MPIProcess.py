@@ -312,6 +312,7 @@ class MPIMaster(MPIProcess):
           has_parent: boolean indicating if this process has a parent process
           num_workers: integer giving the number of workers that work for this master
           num_updates: number of weight updates received from workers
+          best_val_loss: best validation loss computed so far during training
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None):
@@ -323,6 +324,7 @@ class MPIMaster(MPIProcess):
         self.has_parent = False
         if parent_rank is not None:
             self.has_parent = True
+        self.best_val_loss = None
         self.num_workers = child_comm.Get_size() - 1 #all processes but one are workers
         info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
                 "(Communicator size {2}, Child communicator size {3})")
@@ -376,8 +378,10 @@ class MPIMaster(MPIProcess):
         self.validate()
         self.send_exit_to_parent()
 
-    def validate(self):
-        """Reset the updates counter and compute the loss on the validation data"""
+    def validate(self, save_if_best=True):
+        """Reset the updates counter and compute the loss on the validation data.
+            If save_if_best is true, save the model if the validation loss is the 
+            smallest so far."""
         if self.has_parent:
             return
         self.num_updates = 0
@@ -391,10 +395,25 @@ class MPIMaster(MPIProcess):
         val_metrics = np.divide( val_metrics, n_batches )
         print "Validation metrics:",
         self.print_metrics(val_metrics)
+        if save_if_best:
+            self.save_model_if_best(val_metrics)
 
     def apply_update(self):
         """Updates weights according to gradient received from worker process"""
         self.weights = self.algo.apply_update( self.weights, self.gradient )
+
+    def save_model_if_best(self, val_metrics):
+        """If the validation loss is the lowest on record, save the model.
+            The output file name is mpi_learn_model.h5"""
+        if hasattr( val_metrics, '__getitem__'):
+            val_loss = val_metrics[0]
+        else:
+            val_loss = val_metrics
+
+        if self.best_val_loss is None or val_loss < self.best_val_loss:
+            self.best_val_loss = val_loss
+            print "Saving model to mpi_learn_model.h5"
+            self.model.save('mpi_learn_model.h5')
 
     ### MPI-related functions below
 
