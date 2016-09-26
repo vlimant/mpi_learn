@@ -40,16 +40,35 @@ class Data(object):
        """Yields batches of training data until none are left."""
        for cur_file_name in self.file_names:
            cur_file_features, cur_file_labels = self.load_data(cur_file_name)
-           num_in_file = cur_file_features.shape[0]
+           num_in_file = self.get_num_samples( cur_file_features )
 
            # We get all available batches in this file, then move on to the next file.
-           # If the batch size does not evently divide the number of examples per file,
+           # If the batch size does not evenly divide the number of examples per file,
            # then some examples at the end of each file will go unused.  
            for cur_pos in range(0, num_in_file, self.batch_size):
                next_pos = cur_pos + self.batch_size 
                if next_pos < num_in_file:
-                   yield ( cur_file_features[cur_pos:next_pos],
-                           cur_file_labels[cur_pos:next_pos] )
+                   yield ( self.get_batch( cur_file_features, cur_pos, next_pos ),
+                           self.get_batch( cur_file_labels, cur_pos, next_pos ) )
+
+    def is_numpy_array(self, data):
+        return isinstance( data, np.ndarray )
+
+    def get_batch(self, data, start_pos, end_pos):
+        """Input: a numpy array or list of numpy arrays.
+            Gets elements between start_pos and end_pos in each array"""
+        if self.is_numpy_array(data):
+            return data[start_pos:end_pos] 
+        else:
+            return [ arr[start_pos:end_pos] for arr in data ]
+
+    def get_num_samples(self, data):
+        """Input: dataset consisting of a numpy array or list of numpy arrays.
+            Output: number of samples in the dataset"""
+        if self.is_numpy_array(data):
+            return data.shape[0]
+        else:
+            return data[0].shape[0]
 
     def load_data(self, in_file):
         """Input: name of file from which the data should be loaded
@@ -74,9 +93,21 @@ class H5Data(Data):
         self.labels_name = labels_name
 
     def load_data(self, in_file_name):
-        """Loads numpy arrays from H5 file"""
+        """Loads numpy arrays from H5 file.
+            If the features/labels groups contain more than one dataset,
+            we load them all, alphabetically by key."""
         h5_file = h5py.File( in_file_name, 'r' )
-        X = h5_file[self.features_name][:]
-        Y = h5_file[self.labels_name][:]
+        X = self.load_hdf5_data( h5_file[self.features_name] )
+        Y = self.load_hdf5_data( h5_file[self.labels_name] )
         h5_file.close()
         return X,Y 
+
+    def load_hdf5_data(self, data):
+        """Returns a numpy array or (possibly nested) list of numpy arrays 
+            corresponding to the group structure of the input HDF5 data.
+            If a group has more than one key, we give its datasets alphabetically by key"""
+        if hasattr(data, 'keys'):
+            out = [ self.load_hdf5_data( data[key] ) for key in sorted(data.keys()) ]
+        else:
+            out = data[:]
+        return out
