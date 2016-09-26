@@ -39,6 +39,11 @@ if __name__ == '__main__':
             type=int, default=-1)
     parser.add_argument('--validate-every', help='how long to wait between validations', 
             type=int, default=1000, dest='validate_every')
+    parser.add_argument('--features-name', help='name of HDF5 dataset with input features',
+            default='features', dest='features_name')
+    parser.add_argument('--labels-name', help='name of HDF5 dataset with output labels',
+            default='labels', dest='labels_name')
+    args = parser.parse_args()
     args = parser.parse_args()
     model_name = args.model_name
 
@@ -71,7 +76,8 @@ if __name__ == '__main__':
             sleep(0.1)
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
-    data = H5Data(None, batch_size=args.batch, val_samples=1000)
+    data = H5Data( None, batch_size=args.batch, val_samples=1000, 
+            features_name=args.features_name, labels_name=args.labels_name )
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
             train_list=train_list, val_list=val_list, num_masters=args.masters )
 
