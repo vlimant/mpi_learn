@@ -72,7 +72,7 @@ if __name__ == '__main__':
             print "Unable to import keras. Trying again: %d" % try_num
             sleep(0.1)
 
-    data = H5Data( None, batch_size=args.batch, val_samples=1000, 
+    data = H5Data( None, batch_size=args.batch, 
             features_name=args.features_name, labels_name=args.labels_name )
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 

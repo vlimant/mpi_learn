@@ -22,19 +22,16 @@ class Data(object):
         Attributes:
           file_names: list of data files to use for training
           batch_size: size of training batches
-          val_samples: number of samples to be used in each validation
     """
 
-    def __init__(self, file_names, batch_size, val_samples):
+    def __init__(self, file_names, batch_size):
         """Stores the batch size and the names of the data files to be read.
             Params:
               file_names: list of data file names
               batch_size: batch size for training
-              val_samples: number of samples to be used in each validation
         """
         self.file_names = file_names
         self.batch_size = batch_size
-        self.val_samples = val_samples
             
     def generate_data(self):
        """Yields batches of training data until none are left."""
@@ -85,10 +82,10 @@ class H5Data(Data):
           and labels, respectively
     """
 
-    def __init__(self, file_names, batch_size, val_samples,
+    def __init__(self, file_names, batch_size, 
             features_name='features', labels_name='labels'):
         """Initializes and stores names of feature and label datasets"""
-        super(H5Data, self).__init__(file_names, batch_size, val_samples)
+        super(H5Data, self).__init__(file_names, batch_size)
         self.features_name = features_name
         self.labels_name = labels_name
 

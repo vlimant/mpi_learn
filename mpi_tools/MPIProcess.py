@@ -93,6 +93,16 @@ class MPIProcess(object):
         print "Process %d compiling model" % self.rank
         self.model.compile( loss=self.algo.loss, optimizer=sgd, metrics=['accuracy'] )
 
+    def print_metrics(self, metrics):
+        """Display metrics computed during training or validation"""
+        names = self.model.metrics_names
+        if len(names) == 1:
+            print "%s: %.3f" % (names[0],metrics)
+        else:
+            for i,m in enumerate(names):
+                print "%s: %.3f" % (m,metrics[i]),
+            print ""
+
     ### MPI-related functions below ###
 
     # This dict associates message strings with integers to be passed as MPI tags.
@@ -280,7 +290,8 @@ class MPIWorker(MPIProcess):
     def train_on_batch(self, batch):
         """Train on a single batch"""
         train_loss = self.model.train_on_batch( batch[0], batch[1] )
-        print "Training loss:",train_loss
+        print "Training metrics:",
+        self.print_metrics(train_loss)
 
     def compute_gradient(self):
         """Compute the gradient from the new and old sets of model weights"""
@@ -371,10 +382,15 @@ class MPIMaster(MPIProcess):
             return
         self.num_updates = 0
         self.model.set_weights(self.weights)
-        val_loss = self.model.evaluate_generator( self.data.generate_data(),
-                val_samples=self.data.val_samples )
-        print "Validation loss:",val_loss
 
+        n_batches = 0
+        val_metrics = [ 0.0 for i in range( len(self.model.metrics) ) ]
+        for batch in self.data.generate_data():
+            n_batches += 1
+            val_metrics = np.add( val_metrics, self.model.test_on_batch(*batch) )
+        val_metrics = np.divide( val_metrics, n_batches )
+        print "Validation metrics:",
+        self.print_metrics(val_metrics)
 
     def apply_update(self):
         """Updates weights according to gradient received from worker process"""
