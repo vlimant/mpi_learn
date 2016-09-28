@@ -25,6 +25,7 @@ class MPIProcess(object):
            weights: list of numpy arrays storing the last weights received from the parent
            gradient: latest gradient obtained from training
            data: Data object used to generate training or validation data
+           time_step: for keeping track of time
     """
 
     def __init__(self, parent_comm, parent_rank=None, data=None):
@@ -47,6 +48,7 @@ class MPIProcess(object):
         self.weights_shapes = None
         self.weights = None
         self.gradient = None
+        self.time_step = 0
 
         if self.parent_rank is not None:
             self.initialize()
@@ -110,8 +112,10 @@ class MPIProcess(object):
             'any':          MPI.ANY_SOURCE,
             'train':          0,
             'exit':           1,
-            'expect_weights': 2,
-            'expect_gradient':3,
+            'begin_weights': 2,
+            'begin_gradient': 3,
+            'end_gradient':   4,
+            'time':           5,
             'model_arch':     10,
             'algo':           11,
             'weights_shapes': 12,
@@ -211,15 +215,19 @@ class MPIProcess(object):
 
     def send_weights(self, comm=None, dest=None):
         """Send NN weights to the process specified by comm (MPI communicator) and dest (rank).
-            Before sending the weights we first send the tag 'expect_weights'."""
-        self.send_arrays( self.weights, expect_tag='expect_weights', tag='weights', 
+            Before sending the weights we first send the tag 'begin_weights'."""
+        self.send_arrays( self.weights, expect_tag='begin_weights', tag='weights', 
                 comm=comm, dest=dest )
 
     def send_gradient(self, comm=None, dest=None):
         """Send gradient to the process specified by comm (MPI communicator) and dest (rank).
-            Before sending the gradient we first send the tag 'expect_gradient'"""
-        self.send_arrays( self.gradient, expect_tag='expect_gradient', tag='gradient', 
+            Before sending the gradient we first send the tag 'begin_gradient'"""
+        self.send_arrays( self.gradient, expect_tag='begin_gradient', tag='gradient', 
                 comm=comm, dest=dest )
+
+    def send_time_step(self, comm=None, dest=None):
+        """Send the current time step"""
+        self.send( obj=self.time_step, tag='time', dest=dest, comm=comm )
 
     def recv_arrays(self, obj, tag, comm=None, source=None):
         """Receive a list of numpy arrays from the process specified by comm (MPI communicator) 
@@ -238,6 +246,10 @@ class MPIProcess(object):
         """Receive gradient layer by layer from the process specified by comm and source"""
         self.recv_arrays( self.gradient, tag='gradient', comm=comm, source=source )
 
+    def recv_time_step(self):
+        """Receive the current time step from the parent process"""
+        self.time_step = self.recv( tag='time' )
+
     def bcast_weights(self, comm, root=0):
         """Broadcast weights layer by layer on communicator comm from the indicated root rank"""
         for w in self.weights:
@@ -251,6 +263,13 @@ class MPIProcess(object):
         if self.weights is None:
             self.weights = weights_from_shapes( self.weights_shapes )
         self.bcast_weights( comm, root )
+
+    def do_send_sequence(self):
+        """Actions to take when sending a gradient to parent"""
+        self.send_gradient()
+        self.recv_time_step()
+        self.recv_weights()
+
 
 class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent.
@@ -282,8 +301,7 @@ class MPIWorker(MPIProcess):
             for batch in self.data.generate_data():
                 self.train_on_batch(batch)
                 self.compute_gradient()
-                self.send_gradient()
-                self.recv_weights()
+                self.do_send_sequence()
         print "MPIWorker %d signing off" % self.rank
         self.send_exit_to_parent()
 
@@ -311,7 +329,6 @@ class MPIMaster(MPIProcess):
           child_comm: MPI intracommunicator used to communicate with child processes
           has_parent: boolean indicating if this process has a parent process
           num_workers: integer giving the number of workers that work for this master
-          num_updates: number of weight updates received from workers
           best_val_loss: best validation loss computed so far during training
     """
 
@@ -336,19 +353,19 @@ class MPIMaster(MPIProcess):
         """Extracts message source and tag from the MPI status object and processes the message. 
             Returns the tag of the message received.
             Possible messages are:
-            -expect_gradient: worker is ready to send a new gradient
+            -begin_gradient: worker is ready to send a new gradient
             -exit: worker is done training and will shut down
         """
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
-        if tag == 'expect_gradient':
+        if tag == 'begin_gradient':
             self.recv_gradient( source=source, comm=self.child_comm )
             self.apply_update()
-            self.num_updates += 1
+            self.time_step += 1
+            self.send_time_step( dest=source, comm=self.child_comm )
             self.send_weights( dest=source, comm=self.child_comm )
             if self.has_parent:
-                self.send_gradient()
-                self.recv_weights()
+                self.do_send_sequence()
         elif tag == 'exit':
             self.running_workers -= 1 
         else:
@@ -368,11 +385,10 @@ class MPIMaster(MPIProcess):
         status = MPI.Status()
         self.running_workers = self.num_workers
         
-        self.num_updates = 0
         while self.running_workers > 0:
             self.recv_any_from_child(status)
             self.process_message( status )
-            if self.num_updates >= self.algo.validate_every:
+            if self.time_step % self.algo.validate_every == 0:
                 self.validate()
         print "MPIMaster %d done training" % self.rank
         self.validate()
@@ -384,7 +400,6 @@ class MPIMaster(MPIProcess):
             smallest so far."""
         if self.has_parent:
             return
-        self.num_updates = 0
         self.model.set_weights(self.weights)
 
         n_batches = 0
