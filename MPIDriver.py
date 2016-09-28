@@ -9,7 +9,7 @@ from mpi4py import MPI
 from time import sleep
 
 from mpi_tools.MPIManager import MPIManager, get_device
-from Algo import AdaDelta
+from Optimizer import AdaDelta, RMSProp
 from Data import H5Data
 
 def load_model(model_name, load_weights):
@@ -84,7 +84,7 @@ if __name__ == '__main__':
         model = load_model(model_name, load_weights=args.load_weights)
 
         model_arch = model.to_json()
-        algo = AdaDelta( loss='categorical_crossentropy', validate_every=args.validate_every )
+        algo = RMSProp( loss='categorical_crossentropy', validate_every=args.validate_every )
         weights = model.get_weights()
 
         manager.process.set_model_info( model_arch, algo, weights )

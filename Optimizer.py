@@ -2,7 +2,7 @@ import numpy as np
 
 from mpi_tools.Utils import weights_from_shapes
 
-class Algo(object):
+class Optimizer(object):
     """Base class for optimization algorithms.
         Attributes:
           loss: name of loss function (string)
@@ -16,7 +16,7 @@ class Algo(object):
     def apply_update(self, weights, gradient):
         raise NotImplementedError
 
-class VanillaSGD(Algo):
+class VanillaSGD(Optimizer):
     """Stochastic gradient descent with no extra frills.
           learning_rate: learning rate parameter for SGD"""
     
@@ -32,22 +32,20 @@ class VanillaSGD(Algo):
             new_weights.append(np.subtract(w, self.learning_rate*g))
         return new_weights
 
-class AdaDelta(Algo):
-    """ADADELTA adaptive learning rate method.
+
+class RunningAverageOptimizer(Optimizer):
+    """Base class for AdaDelta and RMSProp optimizers.
         rho (tunable parameter): decay constant used to compute running parameter averages
         epsilon (tunable parameter): small constant used to prevent division by zero
-        running_g2: running average of the squared gradient, where squaring is done componentwise
-        running_dx2: running average of squared parameter updates
-        """
+        running_g2: running average of the squared gradient, where squaring is done componentwise"""
 
     def __init__(self, loss, validate_every, rho=0.95, epsilon=1e-8):
-        super(AdaDelta, self).__init__(loss, validate_every)
+        super(RunningAverageOptimizer, self).__init__(loss, validate_every)
         self.rho = rho
         self.epsilon = epsilon
         self.running_g2 = None
-        self.running_dx2 = None
 
-    def running_average_np(self, previous, update):
+    def running_average_square_np(self, previous, update):
         """Computes and returns the running average of the square of a numpy array.
             previous (numpy array): value of the running average in the previous step
             update (numpy array): amount of the update"""
@@ -55,7 +53,7 @@ class AdaDelta(Algo):
         old_contribution = self.rho * previous
         return new_contribution + old_contribution
 
-    def running_average(self, previous, update):
+    def running_average_square(self, previous, update):
         """Returns the running average of the square of a quantity.
             previous (list of numpy arrays): value of the running average in the previous step
             update (list of numpy arrays): amount of the update"""
@@ -63,13 +61,23 @@ class AdaDelta(Algo):
             previous = [ np.zeros_like(u) for u in update ]
         result = []
         for prev, up in zip(previous, update):
-            result.append( self.running_average_np( prev, up ) )
+            result.append( self.running_average_square_np( prev, up ) )
         return result
 
-    def rms(self, value):
+    def sqrt_plus_epsilon(self, value):
         """Computes running RMS from the running average of squares.
             value: numpy array containing the running average of squares"""
         return np.sqrt( np.add(value, self.epsilon) )
+
+
+class AdaDelta(RunningAverageOptimizer):
+    """ADADELTA adaptive learning rate method.
+        running_dx2: running average of squared parameter updates
+        """
+
+    def __init__(self, loss, validate_every, rho=0.95, epsilon=1e-8):
+        super(AdaDelta, self).__init__(loss, validate_every, rho, epsilon)
+        self.running_dx2 = None
 
     def apply_update(self, weights, gradient):
         """Update the running averages of gradients and weight updates,
@@ -79,12 +87,34 @@ class AdaDelta(Algo):
         if self.running_dx2 is None:
             self.running_dx2 = [ np.zeros_like(g) for g in gradient ]
 
-        self.running_g2 = self.running_average( self.running_g2, gradient )
+        self.running_g2 = self.running_average_square( self.running_g2, gradient )
         new_weights = []
         updates = []
         for w, g, g2, dx2 in zip(weights, gradient, self.running_g2, self.running_dx2):
-            update = np.multiply( np.divide( self.rms(dx2), self.rms(g2) ), g )
+            update = np.multiply( np.divide( self.sqrt_plus_epsilon(dx2), self.sqrt_plus_epsilon(g2) ), g )
             new_weights.append( np.subtract( w, update ) )
             updates.append(update)
-        self.running_dx2 = self.running_average( self.running_dx2, updates )
+        self.running_dx2 = self.running_average_square( self.running_dx2, updates )
+        return new_weights
+
+class RMSProp(RunningAverageOptimizer):
+    """RMSProp adaptive learning rate method.
+        learning_rate: base learning rate, kept constant
+        """
+
+    def __init__(self, loss, validate_every, rho=0.9, epsilon=1e-8, learning_rate=0.001):
+        super(RMSProp, self).__init__(loss, validate_every, rho, epsilon)
+        self.learning_rate = learning_rate
+
+    def apply_update(self, weights, gradient):
+        """Update the running averages of gradients,
+            and compute the update for this step."""
+        if self.running_g2 is None:
+            self.running_g2 = [ np.zeros_like(g) for g in gradient ]
+
+        self.running_g2 = self.running_average_square( self.running_g2, gradient )
+        new_weights = []
+        for w, g, g2 in zip(weights, gradient, self.running_g2):
+            update = np.multiply( np.divide( self.learning_rate, self.sqrt_plus_epsilon(g2) ), g )
+            new_weights.append( np.subtract( w, update ) )
         return new_weights
