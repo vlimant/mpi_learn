@@ -48,6 +48,10 @@ class Data(object):
                    yield ( self.get_batch( cur_file_features, cur_pos, next_pos ),
                            self.get_batch( cur_file_labels, cur_pos, next_pos ) )
 
+    def count_data(self):
+        """Counts the number of data points across all files"""
+        return sum( self.batch_size for i in self.generate_data() )
+
     def is_numpy_array(self, data):
         return isinstance( data, np.ndarray )
 

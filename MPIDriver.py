@@ -37,8 +37,6 @@ if __name__ == '__main__':
     parser.add_argument('--learning-rate', help='learning rate for SGD', default=0.01, type=float)
     parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
             type=int, default=-1)
-    parser.add_argument('--validate-every', help='how long to wait between validations', 
-            type=int, default=1000, dest='validate_every')
     parser.add_argument('--features-name', help='name of HDF5 dataset with input features',
             default='features', dest='features_name')
     parser.add_argument('--labels-name', help='name of HDF5 dataset with output labels',
@@ -72,8 +70,9 @@ if __name__ == '__main__':
             print "Unable to import keras. Trying again: %d" % try_num
             sleep(0.1)
 
-    data = H5Data( None, batch_size=args.batch, 
+    data = H5Data( train_list, batch_size=args.batch, 
             features_name=args.features_name, labels_name=args.labels_name )
+    validate_every = data.count_data()/args.batch # count all data to fix time between validations
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
             train_list=train_list, val_list=val_list, num_masters=args.masters )
@@ -84,7 +83,7 @@ if __name__ == '__main__':
         model = load_model(model_name, load_weights=args.load_weights)
 
         model_arch = model.to_json()
-        algo = RMSProp( loss='categorical_crossentropy', validate_every=args.validate_every )
+        algo = RMSProp( loss='categorical_crossentropy', validate_every=validate_every ) 
         weights = model.get_weights()
 
         manager.process.set_model_info( model_arch, algo, weights )
