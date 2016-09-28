@@ -28,8 +28,8 @@ class VanillaSGD(Algo):
         """Move weights in the direction of the gradient, by the amount of the 
             learning rate."""
         new_weights = []
-        for i,w in enumerate(weights):
-            new_weights.append(np.subtract(w, self.learning_rate*gradient[i]))
+        for w, g in zip(weights, gradient):
+            new_weights.append(np.subtract(w, self.learning_rate*g))
         return new_weights
 
 class AdaDelta(Algo):
@@ -62,8 +62,8 @@ class AdaDelta(Algo):
         if previous == 0:
             previous = [ np.zeros_like(u) for u in update ]
         result = []
-        for i in range(len(update)):
-            result.append( self.running_average_np( previous[i], update[i] ) )
+        for prev, up in zip(previous, update):
+            result.append( self.running_average_np( prev, up ) )
         return result
 
     def rms(self, value):
@@ -73,7 +73,7 @@ class AdaDelta(Algo):
 
     def apply_update(self, weights, gradient):
         """Update the running averages of gradients and weight updates,
-            and compute the ADADELTA update for this step."""
+            and compute the Adadelta update for this step."""
         if self.running_g2 is None:
             self.running_g2 = [ np.zeros_like(g) for g in gradient ]
         if self.running_dx2 is None:
@@ -82,10 +82,9 @@ class AdaDelta(Algo):
         self.running_g2 = self.running_average( self.running_g2, gradient )
         new_weights = []
         updates = []
-        for i in range(len(weights)):
-            update = np.multiply( np.divide( self.rms( self.running_dx2[i] ), 
-                self.rms( self.running_g2[i] ) ), gradient[i] )
-            new_weights.append( np.subtract( weights[i], update ) )
+        for w, g, g2, dx2 in zip(weights, gradient, self.running_g2, self.running_dx2):
+            update = np.multiply( np.divide( self.rms(dx2), self.rms(g2) ), g )
+            new_weights.append( np.subtract( w, update ) )
             updates.append(update)
         self.running_dx2 = self.running_average( self.running_dx2, updates )
         return new_weights
