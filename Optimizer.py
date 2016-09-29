@@ -4,24 +4,21 @@ from mpi_tools.Utils import weights_from_shapes
 
 class Optimizer(object):
     """Base class for optimization algorithms.
-        Attributes:
-          loss: name of loss function (string)
-          validate_every: number of updates to wait between validations
-    """
+        Currently doesn't do anything."""
 
-    def __init__(self, loss, validate_every):
-        self.loss = loss
-        self.validate_every = validate_every
+    def __init__(self):
+        pass
 
     def apply_update(self, weights, gradient):
         raise NotImplementedError
+
 
 class VanillaSGD(Optimizer):
     """Stochastic gradient descent with no extra frills.
           learning_rate: learning rate parameter for SGD"""
     
-    def __init__(self, loss, validate_every, learning_rate):
-        super(VanillaSGD, self).__init__(loss, validate_every)
+    def __init__(self, learning_rate):
+        super(VanillaSGD, self).__init__()
         self.learning_rate = learning_rate
 
     def apply_update(self, weights, gradient):
@@ -39,8 +36,8 @@ class RunningAverageOptimizer(Optimizer):
         epsilon (tunable parameter): small constant used to prevent division by zero
         running_g2: running average of the squared gradient, where squaring is done componentwise"""
 
-    def __init__(self, loss, validate_every, rho=0.95, epsilon=1e-8):
-        super(RunningAverageOptimizer, self).__init__(loss, validate_every)
+    def __init__(self, rho=0.95, epsilon=1e-8):
+        super(RunningAverageOptimizer, self).__init__()
         self.rho = rho
         self.epsilon = epsilon
         self.running_g2 = None
@@ -75,8 +72,8 @@ class AdaDelta(RunningAverageOptimizer):
         running_dx2: running average of squared parameter updates
         """
 
-    def __init__(self, loss, validate_every, rho=0.95, epsilon=1e-8):
-        super(AdaDelta, self).__init__(loss, validate_every, rho, epsilon)
+    def __init__(self, rho=0.95, epsilon=1e-8):
+        super(AdaDelta, self).__init__(rho, epsilon)
         self.running_dx2 = None
 
     def apply_update(self, weights, gradient):
@@ -102,8 +99,8 @@ class RMSProp(RunningAverageOptimizer):
         learning_rate: base learning rate, kept constant
         """
 
-    def __init__(self, loss, validate_every, rho=0.9, epsilon=1e-8, learning_rate=0.001):
-        super(RMSProp, self).__init__(loss, validate_every, rho, epsilon)
+    def __init__(self, rho=0.9, epsilon=1e-8, learning_rate=0.001):
+        super(RMSProp, self).__init__(rho, epsilon)
         self.learning_rate = learning_rate
 
     def apply_update(self, weights, gradient):
@@ -118,3 +115,12 @@ class RMSProp(RunningAverageOptimizer):
             update = np.multiply( np.divide( self.learning_rate, self.sqrt_plus_epsilon(g2) ), g )
             new_weights.append( np.subtract( w, update ) )
         return new_weights
+
+def get_optimizer(name):
+    """Get optimizer class by string identifier"""
+    lookup = {
+            'sgd':      VanillaSGD,
+            'adadelta': AdaDelta,
+            'rmsprop':  RMSProp,
+            }
+    return lookup[name]

@@ -5,7 +5,6 @@ import os,sys
 import numpy as np
 from mpi4py import MPI
 from keras.models import model_from_json
-from keras.optimizers import SGD
 
 from mpi_tools.Utils import Error, weights_from_shapes, shapes_from_weights
 
@@ -23,7 +22,7 @@ class MPIProcess(object):
            algo: Algo object defining how to optimize model weights
            weights_shapes: list of tuples indicating the shape of each layer of the model
            weights: list of numpy arrays storing the last weights received from the parent
-           gradient: latest gradient obtained from training
+           update: latest update obtained from training
            data: Data object used to generate training or validation data
            time_step: for keeping track of time
     """
@@ -47,21 +46,17 @@ class MPIProcess(object):
         self.algo = None
         self.weights_shapes = None
         self.weights = None
-        self.gradient = None
+        self.update = None
         self.time_step = 0
 
         if self.parent_rank is not None:
-            self.initialize()
+            self.bcast_model_info( self.parent_comm )
+            self.set_model_info( model_arch=self.model_arch, weights=self.weights )
             self.train()
         else:
             warning = ("MPIProcess {0} created with no parent rank. "
                         "Please initialize manually")
             print warning.format(self.rank)
-
-    def initialize(self):
-        """Receive model, weights, and training algorithm from parent, and store them"""
-        self.bcast_model_info( self.parent_comm )
-        self.set_model_info( model_arch=self.model_arch, weights=self.weights )
 
     def set_model_info(self, model_arch=None, algo=None, weights=None):
         """Sets NN architecture, training algorithm, and weights.
@@ -75,25 +70,24 @@ class MPIProcess(object):
             self.weights = weights
             self.weights_shapes = shapes_from_weights( self.weights )
             self.model.set_weights(self.weights)
-            self.gradient = weights_from_shapes( self.weights_shapes )
+            self.update = weights_from_shapes( self.weights_shapes )
 
     def check_sanity(self):
         """Throws an exception if any model attribute has not been set yet."""
         for par in ['model','model_arch','algo','weights_shapes','weights']:
             if not hasattr(self, par) or getattr(self, par) is None:
-                raise Error("%s not found!  Did you call initialize() for this process?" % par)
+                raise Error("%s not found!  Process %d does not seem to be set up correctly." % (par,self.rank))
 
     def train(self):
         """To be implemented in derived classes"""
         raise NotImplementedError
 
     def compile_model(self):
-        """Compile the model. Workers are only responsible for computing the gradient and 
-            sending it to the master, so we use ordinary SGD with learning rate 1 and 
-            compute the gradient as (old weights - new weights) after each batch"""
-        sgd = SGD(lr=1.0)
+        """Compile the model. Note that the compilation settings
+            are relevant only for Workers because the Master updates
+            its weights using an mpi_learn optimizer."""
         print "Process %d compiling model" % self.rank
-        self.model.compile( loss=self.algo.loss, optimizer=sgd, metrics=['accuracy'] )
+        self.algo.compile_model( self.model )
 
     def print_metrics(self, metrics):
         """Display metrics computed during training or validation"""
@@ -113,13 +107,12 @@ class MPIProcess(object):
             'train':          0,
             'exit':           1,
             'begin_weights':  2,
-            'begin_gradient': 3,
+            'begin_update'  : 3,
             'time':           4,
             'model_arch':     10,
             'algo':           11,
             'weights_shapes': 12,
             'weights':        13,
-            'gradient':       14,
             }
     # This dict is for reverse tag lookups.
     inv_tag_lookup = { value:key for key,value in tag_lookup.iteritems() }
@@ -218,40 +211,41 @@ class MPIProcess(object):
         self.send_arrays( self.weights, expect_tag='begin_weights', tag='weights', 
                 comm=comm, dest=dest )
 
-    def send_gradient(self, comm=None, dest=None):
-        """Send gradient to the process specified by comm (MPI communicator) and dest (rank).
-            Before sending the gradient we first send the tag 'begin_gradient'"""
-        self.send_arrays( self.gradient, expect_tag='begin_gradient', tag='gradient', 
+    def send_update(self, comm=None, dest=None):
+        """Send update to the process specified by comm (MPI communicator) and dest (rank).
+            Before sending the update we first send the tag 'begin_update'"""
+        self.send_arrays( self.update, expect_tag='begin_update', tag='weights', 
                 comm=comm, dest=dest )
 
     def send_time_step(self, comm=None, dest=None):
         """Send the current time step"""
         self.send( obj=self.time_step, tag='time', dest=dest, comm=comm )
 
-    def recv_arrays(self, obj, tag, comm=None, source=None):
+    def recv_arrays(self, obj, tag, comm=None, source=None, add_to_existing=False):
         """Receive a list of numpy arrays from the process specified by comm (MPI communicator) 
             and dest (rank).
               obj: list of destination arrays 
-              tag: MPI tag accompanying the message"""
+              tag: MPI tag accompanying the message
+              add_to_existing: if true, add to existing object instead of replacing"""
+        if add_to_existing:
+            tmp = weights_from_shapes( [ w.shape for w in obj ] )
+            self.recv_arrays( tmp, tag=tag, comm=comm, source=source )
+            for i in range(len(obj)):
+                obj[i] += tmp[i]
         for w in obj:
             self.recv( w, tag, comm=comm, source=source, buffer=True )
 
-    def recv_weights(self, comm=None, source=None):
+    def recv_weights(self, comm=None, source=None, add_to_existing=False):
         """Receive NN weights layer by layer from the process specified by comm and source"""
-        self.recv_arrays( self.weights, tag='weights', comm=comm, source=source )
-        self.model.set_weights( self.weights )
+        self.recv_arrays( self.weights, tag='weights', comm=comm, source=source,
+                add_to_existing=add_to_existing )
 
-    def recv_gradient(self, comm=None, source=None, add_to_existing=False):
-        """Receive a gradient layer by layer from the process specified by comm and source.
-            Add it to the current gradient if add_to_existing is True, 
-            otherwise overwrite the current gradient"""
-        if add_to_existing:
-            tmp_gradient = weights_from_shapes( self.weights_shapes )
-            self.recv_arrays( tmp_gradient, tag='gradient', comm=comm, source=source )
-            for i in range(len(self.gradient)):
-                self.gradient[i] += tmp_gradient[i]
-        else:
-            self.recv_arrays( self.gradient, tag='gradient', comm=comm, source=source )
+    def recv_update(self, comm=None, source=None, add_to_existing=False):
+        """Receive an update layer by layer from the process specified by comm and source.
+            Add it to the current update if add_to_existing is True, 
+            otherwise overwrite the current update"""
+        self.recv_arrays( self.update, tag='weights', comm=comm, source=source,
+                add_to_existing=add_to_existing )
 
     def recv_time_step(self):
         """Receive the current time step from the parent process"""
@@ -272,15 +266,18 @@ class MPIProcess(object):
         self.bcast_weights( comm, root )
 
     def do_send_sequence(self):
-        """Actions to take when sending a gradient to parent"""
-        self.send_gradient()
+        """Actions to take when sending an update to parent"""
+        if self.algo.worker_sends_weights_or_updates() == 'weights':
+            self.send_weights()
+        else:
+            self.send_update()
         self.recv_time_step()
         self.recv_weights()
+        self.algo.set_worker_model_weights( self.model, self.weights )
 
 
 class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent.
-
         Attributes:
           num_epochs: integer giving the number of epochs to train for
     """
@@ -297,7 +294,7 @@ class MPIWorker(MPIProcess):
 
     def train(self):
         """Compile the model, then wait for the signal to train. Then train for num_epochs epochs.
-            In each step, train on one batch of input data, then send the gradient to the master
+            In each step, train on one batch of input data, then send the update to the master
             and wait to receive a new set of weights.  When done, send 'exit' signal to parent.
         """
         self.check_sanity()
@@ -307,7 +304,7 @@ class MPIWorker(MPIProcess):
             print "MPIWorker %d beginning epoch %d" % (self.rank, epoch)
             for batch in self.data.generate_data():
                 self.train_on_batch(batch)
-                self.compute_gradient()
+                self.compute_update()
                 self.do_send_sequence()
         print "MPIWorker %d signing off" % self.rank
         self.send_exit_to_parent()
@@ -318,11 +315,9 @@ class MPIWorker(MPIProcess):
         print "Worker %d metrics:"%self.rank,
         self.print_metrics(train_loss)
 
-    def compute_gradient(self):
-        """Compute the gradient from the new and old sets of model weights"""
-        self.gradient = []
-        for cur_w, new_w in zip( self.weights, self.model.get_weights() ):
-            self.gradient.append( np.subtract( cur_w, new_w ) )
+    def compute_update(self):
+        """Compute the update from the new and old sets of model weights"""
+        self.update = self.algo.compute_update( self.weights, self.model.get_weights() )
 
     def await_signal_from_parent(self):
         """Wait for 'train' signal from parent process"""
@@ -330,7 +325,7 @@ class MPIWorker(MPIProcess):
 
 class MPIMaster(MPIProcess):
     """This class sends model information to its worker processes and updates its model weights
-        according to gradients received from the workerss.
+        according to updates or weights received from the workers.
         
         Attributes:
           child_comm: MPI intracommunicator used to communicate with child processes
@@ -340,6 +335,7 @@ class MPIMaster(MPIProcess):
           running_workers: number of workers not yet done training
           waiting_workers_list: list of workers that sent updates and are now waiting
           num_sync_workers: number of worker updates to receive before performing an update
+          update_tag: MPI tag to expect when workers send updates
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
@@ -362,17 +358,17 @@ class MPIMaster(MPIProcess):
                 child_comm.Get_size())
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data )
 
-    def decide_whether_to_update(self):
+    def decide_whether_to_synchronize(self):
         """Check whether enough workers have sent updates"""
         return ( len(self.waiting_workers_list) >= self.num_sync_workers )
         
-    def update(self):
+    def synchronize(self):
         """Update model weights and signal all waiting workers to work again.
-            Send our gradient to our parent, if we have one, and reset the gradient"""
-        self.apply_gradient()
+            Send our update to our parent, if we have one"""
+        self.apply_update()
         if self.has_parent:
             self.do_send_sequence()
-        self.gradient = weights_from_shapes( self.weights_shapes ) #reset gradient
+        self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
         while self.waiting_workers_list:
             child = self.waiting_workers_list.pop()
             self.send_time_step( dest=child, comm=self.child_comm )
@@ -382,18 +378,18 @@ class MPIMaster(MPIProcess):
         """Extracts message source and tag from the MPI status object and processes the message. 
             Returns the tag of the message received.
             Possible messages are:
-            -begin_gradient: worker is ready to send a new gradient
+            -begin_update/begin_weights: worker is ready to send a new update
             -exit: worker is done training and will shut down
         """
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
-        if tag == 'begin_gradient':
-            self.recv_gradient( source=source, comm=self.child_comm, 
+        if tag == self.update_tag:
+            self.recv_update( source=source, comm=self.child_comm, 
                     add_to_existing=(self.num_sync_workers>1) )
             self.waiting_workers_list.append(source)
             self.time_step += 1
-            if self.decide_whether_to_update():
-                self.update()
+            if self.decide_whether_to_synchronize():
+                self.synchronize()
             if self.time_step % self.algo.validate_every == 0:
                 self.validate()
         elif tag == 'exit':
@@ -417,6 +413,7 @@ class MPIMaster(MPIProcess):
         self.running_workers = self.num_workers
         self.waiting_workers_list = []
         
+        self.update_tag = 'begin_'+self.algo.worker_sends_weights_or_updates()
         while self.running_workers > 0:
             self.recv_any_from_child(status)
             self.process_message( status )
@@ -425,7 +422,7 @@ class MPIMaster(MPIProcess):
         self.send_exit_to_parent()
 
     def validate(self, save_if_best=True):
-        """Reset the updates counter and compute the loss on the validation data.
+        """Compute the loss on the validation data.
             If save_if_best is true, save the model if the validation loss is the 
             smallest so far."""
         if self.has_parent:
@@ -443,9 +440,9 @@ class MPIMaster(MPIProcess):
         if save_if_best:
             self.save_model_if_best(val_metrics)
 
-    def apply_gradient(self):
-        """Updates weights according to gradient received from worker process"""
-        self.weights = self.algo.apply_update( self.weights, self.gradient )
+    def apply_update(self):
+        """Updates weights according to update received from worker process"""
+        self.weights = self.algo.apply_update( self.weights, self.update )
 
     def save_model_if_best(self, val_metrics):
         """If the validation loss is the lowest on record, save the model.
