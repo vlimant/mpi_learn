@@ -241,13 +241,17 @@ class MPIProcess(object):
         self.recv_arrays( self.weights, tag='weights', comm=comm, source=source )
         self.model.set_weights( self.weights )
 
-    def recv_gradient(self, comm=None, source=None):
+    def recv_gradient(self, comm=None, source=None, add_to_existing=False):
         """Receive a gradient layer by layer from the process specified by comm and source.
-            Add it to the current gradient"""
-        tmp_gradient = weights_from_shapes( self.weights_shapes )
-        self.recv_arrays( tmp_gradient, tag='gradient', comm=comm, source=source )
-        for i in range(len(self.gradient)):
-            self.gradient[i] += tmp_gradient[i]
+            Add it to the current gradient if add_to_existing is True, 
+            otherwise overwrite the current gradient"""
+        if add_to_existing:
+            tmp_gradient = weights_from_shapes( self.weights_shapes )
+            self.recv_arrays( tmp_gradient, tag='gradient', comm=comm, source=source )
+            for i in range(len(self.gradient)):
+                self.gradient[i] += tmp_gradient[i]
+        else:
+            self.recv_arrays( self.gradient, tag='gradient', comm=comm, source=source )
 
     def recv_time_step(self):
         """Receive the current time step from the parent process"""
@@ -335,9 +339,11 @@ class MPIMaster(MPIProcess):
           best_val_loss: best validation loss computed so far during training
           running_workers: number of workers not yet done training
           waiting_workers_list: list of workers that sent updates and are now waiting
+          num_sync_workers: number of worker updates to receive before performing an update
     """
 
-    def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None):
+    def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
+            num_sync_workers=1):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -348,25 +354,25 @@ class MPIMaster(MPIProcess):
             self.has_parent = True
         self.best_val_loss = None
         self.num_workers = child_comm.Get_size() - 1 #all processes but one are workers
+        self.num_sync_workers = num_sync_workers
         info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
                 "(Communicator size {2}, Child communicator size {3})")
+        print "Will wait for updates from %d workers before synchronizing" % self.num_sync_workers
         print info.format(parent_comm.Get_rank(),parent_rank,parent_comm.Get_size(), 
                 child_comm.Get_size())
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data )
 
     def decide_whether_to_update(self):
         """Check whether enough workers have sent updates"""
-        if len(self.waiting_workers_list) > 0:
-            return True
-        return False
+        return ( len(self.waiting_workers_list) >= self.num_sync_workers )
         
     def update(self):
         """Update model weights and signal all waiting workers to work again.
-            Also send our gradient to our parent, if we have one, and reset the gradient"""
+            Send our gradient to our parent, if we have one, and reset the gradient"""
         self.apply_gradient()
         if self.has_parent:
             self.do_send_sequence()
-        self.gradient = weights_from_shapes( self.weights_shapes )
+        self.gradient = weights_from_shapes( self.weights_shapes ) #reset gradient
         while self.waiting_workers_list:
             child = self.waiting_workers_list.pop()
             self.send_time_step( dest=child, comm=self.child_comm )
@@ -382,13 +388,17 @@ class MPIMaster(MPIProcess):
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
         if tag == 'begin_gradient':
-            self.recv_gradient( source=source, comm=self.child_comm )
+            self.recv_gradient( source=source, comm=self.child_comm, 
+                    add_to_existing=(self.num_sync_workers>1) )
             self.waiting_workers_list.append(source)
             self.time_step += 1
             if self.decide_whether_to_update():
                 self.update()
+            if self.time_step % self.algo.validate_every == 0:
+                self.validate()
         elif tag == 'exit':
             self.running_workers -= 1 
+            self.num_sync_workers -= 1
         else:
             raise ValueError("Tag %s not recognized" % tag)
         return tag
@@ -410,8 +420,6 @@ class MPIMaster(MPIProcess):
         while self.running_workers > 0:
             self.recv_any_from_child(status)
             self.process_message( status )
-            if self.time_step % self.algo.validate_every == 0:
-                self.validate()
         print "MPIMaster %d done training" % self.rank
         self.validate()
         self.send_exit_to_parent()

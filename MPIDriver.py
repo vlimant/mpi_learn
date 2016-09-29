@@ -34,7 +34,7 @@ if __name__ == '__main__':
     parser.add_argument('--masters', help='number of master processes', default=1, type=int)
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--batch', help='batch size', default=100, type=int)
-    parser.add_argument('--learning-rate', help='learning rate for SGD', default=0.01, type=float)
+    parser.add_argument('--synchronous',help='run in synchronous mode',action='store_true')
     parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
             type=int, default=-1)
     parser.add_argument('--features-name', help='name of HDF5 dataset with input features',
@@ -70,19 +70,22 @@ if __name__ == '__main__':
             print "Unable to import keras. Trying again: %d" % try_num
             sleep(0.1)
 
+    # We initialize the Data object with the training data list
+    # so that we can use it to count the number of training examples
     data = H5Data( train_list, batch_size=args.batch, 
             features_name=args.features_name, labels_name=args.labels_name )
     if comm.Get_rank() == 0:
         validate_every = data.count_data()/args.batch 
+
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
-            train_list=train_list, val_list=val_list, num_masters=args.masters )
+            train_list=train_list, val_list=val_list, num_masters=args.masters,
+            synchronous=args.synchronous )
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
 
         model = load_model(model_name, load_weights=args.load_weights)
-
         model_arch = model.to_json()
         algo = RMSProp( loss='binary_crossentropy', validate_every=validate_every ) 
         weights = model.get_weights()
