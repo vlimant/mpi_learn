@@ -197,25 +197,28 @@ class MPIProcess(object):
         if self.parent_rank is not None:
             self.send( None, 'exit' )
 
-    def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None):
-        """Send a list of numpy arrays to the process specified by comm (MPI communicator) and dest (rank).
-            We first send expect_tag to tell the dest process that we are sending several buffer objects,
-            then send the objects layer by layer."""
+    def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, send_time=False):
+        """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
+            and dest (rank).  We first send expect_tag to tell the dest process that we 
+            are sending several buffer objects, then send the objects layer by layer.
+            Also optionally send the current time step before sending the arrays."""
         self.send( None, expect_tag, comm=comm, dest=dest )
+        if send_time:
+            self.send_time_step( comm=comm, dest=dest )
         for w in obj:
             self.send( w, tag, comm=comm, dest=dest, buffer=True )
 
-    def send_weights(self, comm=None, dest=None):
+    def send_weights(self, comm=None, dest=None, send_time=False):
         """Send NN weights to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the weights we first send the tag 'begin_weights'."""
         self.send_arrays( self.weights, expect_tag='begin_weights', tag='weights', 
-                comm=comm, dest=dest )
+                comm=comm, dest=dest, send_time=send_time )
 
-    def send_update(self, comm=None, dest=None):
+    def send_update(self, comm=None, dest=None, send_time=False):
         """Send update to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the update we first send the tag 'begin_update'"""
         self.send_arrays( self.update, expect_tag='begin_update', tag='weights', 
-                comm=comm, dest=dest )
+                comm=comm, dest=dest, send_time=send_time )
 
     def send_time_step(self, comm=None, dest=None):
         """Send the current time step"""
@@ -247,9 +250,9 @@ class MPIProcess(object):
         self.recv_arrays( self.update, tag='weights', comm=comm, source=source,
                 add_to_existing=add_to_existing )
 
-    def recv_time_step(self):
-        """Receive the current time step from the parent process"""
-        self.time_step = self.recv( tag='time' )
+    def recv_time_step(self, comm=None, source=None):
+        """Receive the current time step"""
+        return self.recv( tag='time', comm=comm, source=source )
 
     def bcast_weights(self, comm, root=0):
         """Broadcast weights layer by layer on communicator comm from the indicated root rank"""
@@ -268,10 +271,10 @@ class MPIProcess(object):
     def do_send_sequence(self):
         """Actions to take when sending an update to parent"""
         if self.algo.worker_sends_weights_or_updates() == 'weights':
-            self.send_weights()
+            self.send_weights(send_time=True)
         else:
-            self.send_update()
-        self.recv_time_step()
+            self.send_update(send_time=True)
+        self.time_step = self.recv_time_step()
         self.recv_weights()
         self.algo.set_worker_model_weights( self.model, self.weights )
 
@@ -336,6 +339,7 @@ class MPIMaster(MPIProcess):
           waiting_workers_list: list of workers that sent updates and are now waiting
           num_sync_workers: number of worker updates to receive before performing an update
           update_tag: MPI tag to expect when workers send updates
+          staleness: difference between current time and worker's time stamp
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
@@ -349,6 +353,7 @@ class MPIMaster(MPIProcess):
         if parent_rank is not None:
             self.has_parent = True
         self.best_val_loss = None
+        self.staleness = None
         self.num_workers = child_comm.Get_size() - 1 #all processes but one are workers
         self.num_sync_workers = num_sync_workers
         info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
@@ -368,6 +373,8 @@ class MPIMaster(MPIProcess):
         self.apply_update()
         if self.has_parent:
             self.do_send_sequence()
+        else:
+            self.time_step += 1 
         self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
         while self.waiting_workers_list:
             child = self.waiting_workers_list.pop()
@@ -384,10 +391,11 @@ class MPIMaster(MPIProcess):
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
         if tag == self.update_tag:
+            self.staleness = self.time_step - self.recv_time_step( 
+                    source=source, comm=self.child_comm )
             self.recv_update( source=source, comm=self.child_comm, 
                     add_to_existing=(self.num_sync_workers>1) )
             self.waiting_workers_list.append(source)
-            self.time_step += 1
             if self.decide_whether_to_synchronize():
                 self.synchronize()
             if self.time_step % self.algo.validate_every == 0:
