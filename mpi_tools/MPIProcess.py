@@ -1,6 +1,5 @@
 ### MPIWorker and MPIMaster classes 
 
-import time
 import os,sys
 import numpy as np
 from mpi4py import MPI
@@ -99,6 +98,21 @@ class MPIProcess(object):
                 print "%s: %.3f" % (m,metrics[i]),
             print ""
 
+    def do_send_sequence(self):
+        """Actions to take when sending an update to parent:
+            -Send the update (if the parent accepts it)
+            -Sync time and model weights with parent"""
+        if self.algo.worker_sends_weights_or_updates() == 'weights':
+            self.send_weights(check_permission=True)
+        else:
+            self.send_update(check_permission=True)
+        self.sync_with_master()
+
+    def sync_with_master(self):
+        self.time_step = self.recv_time_step()
+        self.recv_weights()
+        self.algo.set_worker_model_weights( self.model, self.weights )
+
     ### MPI-related functions below ###
 
     # This dict associates message strings with integers to be passed as MPI tags.
@@ -109,6 +123,7 @@ class MPIProcess(object):
             'begin_weights':  2,
             'begin_update'  : 3,
             'time':           4,
+            'bool':           5,
             'model_arch':     10,
             'algo':           11,
             'weights_shapes': 12,
@@ -197,32 +212,39 @@ class MPIProcess(object):
         if self.parent_rank is not None:
             self.send( None, 'exit' )
 
-    def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, send_time=False):
+    def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, check_permission=False):
         """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
             and dest (rank).  We first send expect_tag to tell the dest process that we 
             are sending several buffer objects, then send the objects layer by layer.
-            Also optionally send the current time step before sending the arrays."""
+            Optionally check first to see if the update will be accepted by the master"""
         self.send( None, expect_tag, comm=comm, dest=dest )
-        if send_time:
+        if check_permission:
+            # To check permission we send the update's time stamp to the master.
+            # Then we wait to receive the decision yes/no.
             self.send_time_step( comm=comm, dest=dest )
+            decision = self.recv_bool( comm=comm, source=dest )
+            if not decision: return
         for w in obj:
             self.send( w, tag, comm=comm, dest=dest, buffer=True )
 
-    def send_weights(self, comm=None, dest=None, send_time=False):
+    def send_weights(self, comm=None, dest=None, check_permission=False):
         """Send NN weights to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the weights we first send the tag 'begin_weights'."""
         self.send_arrays( self.weights, expect_tag='begin_weights', tag='weights', 
-                comm=comm, dest=dest, send_time=send_time )
+                comm=comm, dest=dest, check_permission=check_permission )
 
-    def send_update(self, comm=None, dest=None, send_time=False):
+    def send_update(self, comm=None, dest=None, check_permission=False):
         """Send update to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the update we first send the tag 'begin_update'"""
         self.send_arrays( self.update, expect_tag='begin_update', tag='weights', 
-                comm=comm, dest=dest, send_time=send_time )
+                comm=comm, dest=dest, check_permission=check_permission )
 
     def send_time_step(self, comm=None, dest=None):
         """Send the current time step"""
         self.send( obj=self.time_step, tag='time', dest=dest, comm=comm )
+
+    def send_bool(self, obj, comm=None, dest=None):
+        self.send( obj=obj, tag='bool', dest=dest, comm=comm )
 
     def recv_arrays(self, obj, tag, comm=None, source=None, add_to_existing=False):
         """Receive a list of numpy arrays from the process specified by comm (MPI communicator) 
@@ -235,6 +257,7 @@ class MPIProcess(object):
             self.recv_arrays( tmp, tag=tag, comm=comm, source=source )
             for i in range(len(obj)):
                 obj[i] += tmp[i]
+            return
         for w in obj:
             self.recv( w, tag, comm=comm, source=source, buffer=True )
 
@@ -254,6 +277,9 @@ class MPIProcess(object):
         """Receive the current time step"""
         return self.recv( tag='time', comm=comm, source=source )
 
+    def recv_bool(self, comm=None, source=None):
+        return self.recv( tag='bool', comm=comm, source=source )
+
     def bcast_weights(self, comm, root=0):
         """Broadcast weights layer by layer on communicator comm from the indicated root rank"""
         for w in self.weights:
@@ -267,16 +293,6 @@ class MPIProcess(object):
         if self.weights is None:
             self.weights = weights_from_shapes( self.weights_shapes )
         self.bcast_weights( comm, root )
-
-    def do_send_sequence(self):
-        """Actions to take when sending an update to parent"""
-        if self.algo.worker_sends_weights_or_updates() == 'weights':
-            self.send_weights(send_time=True)
-        else:
-            self.send_update(send_time=True)
-        self.time_step = self.recv_time_step()
-        self.recv_weights()
-        self.algo.set_worker_model_weights( self.model, self.weights )
 
 
 class MPIWorker(MPIProcess):
@@ -339,7 +355,6 @@ class MPIMaster(MPIProcess):
           waiting_workers_list: list of workers that sent updates and are now waiting
           num_sync_workers: number of worker updates to receive before performing an update
           update_tag: MPI tag to expect when workers send updates
-          staleness: difference between current time and worker's time stamp
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
@@ -353,7 +368,6 @@ class MPIMaster(MPIProcess):
         if parent_rank is not None:
             self.has_parent = True
         self.best_val_loss = None
-        self.staleness = None
         self.num_workers = child_comm.Get_size() - 1 #all processes but one are workers
         self.num_sync_workers = num_sync_workers
         info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
@@ -363,23 +377,56 @@ class MPIMaster(MPIProcess):
                 child_comm.Get_size())
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data )
 
-    def decide_whether_to_synchronize(self):
+    def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""
         return ( len(self.waiting_workers_list) >= self.num_sync_workers )
+
+    def is_synchronous(self):
+        return self.num_sync_workers > 1
+
+    def accept_update(self):
+        """Returns true if the master should accept the latest worker's update, false otherwise"""
+        return (not self.is_synchronous()) or self.algo.staleness == 0
         
-    def synchronize(self):
+    def sync_children(self):
         """Update model weights and signal all waiting workers to work again.
             Send our update to our parent, if we have one"""
-        self.apply_update()
-        if self.has_parent:
-            self.do_send_sequence()
-        else:
-            self.time_step += 1 
-        self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
         while self.waiting_workers_list:
             child = self.waiting_workers_list.pop()
-            self.send_time_step( dest=child, comm=self.child_comm )
-            self.send_weights( dest=child, comm=self.child_comm )
+            self.sync_child(child)
+
+    def sync_child(self, child):
+        self.send_time_step( dest=child, comm=self.child_comm )
+        self.send_weights( dest=child, comm=self.child_comm )
+
+    def do_update_sequence(self, source):
+        """Update procedure:
+         -Compute the staleness of the update and decide whether to accept it.
+         -If we accept, we signal the worker and wait to receive the update.
+         -After receiving the update, we determine whether to sync with the workers.
+         -Finally we run validation if we have completed one epoch's worth of updates."""
+        self.algo.staleness = self.time_step - self.recv_time_step( 
+                source=source, comm=self.child_comm )
+        accepted = self.accept_update()
+        self.send_bool( accepted, dest=source, comm=self.child_comm )
+        if accepted:
+            self.recv_update( source=source, comm=self.child_comm, 
+                    add_to_existing=self.is_synchronous() )
+            self.waiting_workers_list.append(source)
+            print self.waiting_workers_list
+            if self.decide_whether_to_sync():
+                self.apply_update()
+                if self.has_parent:
+                    self.do_send_sequence()
+                else:
+                    self.time_step += 1 
+                self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
+                self.sync_children()
+            if self.time_step % self.algo.validate_every == 0 and self.time_step > 0:
+                self.validate()
+        else:
+            print "update from",source,"rejected!"
+            self.sync_child(source)
 
     def process_message(self, status):
         """Extracts message source and tag from the MPI status object and processes the message. 
@@ -391,15 +438,7 @@ class MPIMaster(MPIProcess):
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
         if tag == self.update_tag:
-            self.staleness = self.time_step - self.recv_time_step( 
-                    source=source, comm=self.child_comm )
-            self.recv_update( source=source, comm=self.child_comm, 
-                    add_to_existing=(self.num_sync_workers>1) )
-            self.waiting_workers_list.append(source)
-            if self.decide_whether_to_synchronize():
-                self.synchronize()
-            if self.time_step % self.algo.validate_every == 0:
-                self.validate()
+            self.do_update_sequence(source)
         elif tag == 'exit':
             self.running_workers -= 1 
             self.num_sync_workers -= 1

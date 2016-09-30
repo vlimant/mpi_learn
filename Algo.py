@@ -8,6 +8,7 @@ class Algo(object):
         Attributes:
           optimizer: instance of the Optimizer class used to compute training updates
           optimizer_name: name of the optimizer
+          staleness: difference in time step between master and most recent worker's update
           loss: name of loss function (string)
           validate_every: number of updates to wait between validations
           """
