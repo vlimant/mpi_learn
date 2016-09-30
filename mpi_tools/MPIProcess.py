@@ -3,7 +3,6 @@
 import os,sys
 import numpy as np
 from mpi4py import MPI
-from keras.models import model_from_json
 
 from mpi_tools.Utils import Error, weights_from_shapes, shapes_from_weights
 
@@ -62,6 +61,7 @@ class MPIProcess(object):
             Any parameter not provided is skipped."""
         if model_arch is not None:
             self.model_arch = model_arch
+            from keras.models import model_from_json
             self.model = model_from_json( self.model_arch )
         if algo is not None:
             self.algo = algo
@@ -102,10 +102,7 @@ class MPIProcess(object):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
             -Sync time and model weights with parent"""
-        if self.algo.worker_sends_weights_or_updates() == 'weights':
-            self.send_weights(check_permission=True)
-        else:
-            self.send_update(check_permission=True)
+        self.send_update(check_permission=True)
         self.sync_with_master()
 
     def sync_with_master(self):
@@ -128,6 +125,7 @@ class MPIProcess(object):
             'algo':           11,
             'weights_shapes': 12,
             'weights':        13,
+            'update':         13,
             }
     # This dict is for reverse tag lookups.
     inv_tag_lookup = { value:key for key,value in tag_lookup.iteritems() }
@@ -236,7 +234,7 @@ class MPIProcess(object):
     def send_update(self, comm=None, dest=None, check_permission=False):
         """Send update to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the update we first send the tag 'begin_update'"""
-        self.send_arrays( self.update, expect_tag='begin_update', tag='weights', 
+        self.send_arrays( self.update, expect_tag='begin_update', tag='update', 
                 comm=comm, dest=dest, check_permission=check_permission )
 
     def send_time_step(self, comm=None, dest=None):
@@ -270,7 +268,7 @@ class MPIProcess(object):
         """Receive an update layer by layer from the process specified by comm and source.
             Add it to the current update if add_to_existing is True, 
             otherwise overwrite the current update"""
-        self.recv_arrays( self.update, tag='weights', comm=comm, source=source,
+        self.recv_arrays( self.update, tag='update', comm=comm, source=source,
                 add_to_existing=add_to_existing )
 
     def recv_time_step(self, comm=None, source=None):
@@ -399,6 +397,12 @@ class MPIMaster(MPIProcess):
         self.send_time_step( dest=child, comm=self.child_comm )
         self.send_weights( dest=child, comm=self.child_comm )
 
+    def sync_parent(self):
+        if self.has_parent:
+            self.do_send_sequence()
+        else:
+            self.time_step += 1 
+
     def do_update_sequence(self, source):
         """Update procedure:
          -Compute the staleness of the update and decide whether to accept it.
@@ -413,31 +417,31 @@ class MPIMaster(MPIProcess):
             self.recv_update( source=source, comm=self.child_comm, 
                     add_to_existing=self.is_synchronous() )
             self.waiting_workers_list.append(source)
-            print self.waiting_workers_list
             if self.decide_whether_to_sync():
-                self.apply_update()
-                if self.has_parent:
-                    self.do_send_sequence()
+                if self.algo.send_before_apply:
+                    self.sync_parent()
+                    self.sync_children()
+                    self.apply_update()
                 else:
-                    self.time_step += 1 
+                    self.apply_update()
+                    self.sync_parent()
+                    self.sync_children()
                 self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
-                self.sync_children()
             if self.time_step % self.algo.validate_every == 0 and self.time_step > 0:
                 self.validate()
         else:
-            print "update from",source,"rejected!"
             self.sync_child(source)
 
     def process_message(self, status):
         """Extracts message source and tag from the MPI status object and processes the message. 
             Returns the tag of the message received.
             Possible messages are:
-            -begin_update/begin_weights: worker is ready to send a new update
+            -begin_update: worker is ready to send a new update
             -exit: worker is done training and will shut down
         """
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
-        if tag == self.update_tag:
+        if tag == 'begin_update':
             self.do_update_sequence(source)
         elif tag == 'exit':
             self.running_workers -= 1 
@@ -460,7 +464,6 @@ class MPIMaster(MPIProcess):
         self.running_workers = self.num_workers
         self.waiting_workers_list = []
         
-        self.update_tag = 'begin_'+self.algo.worker_sends_weights_or_updates()
         while self.running_workers > 0:
             self.recv_any_from_child(status)
             self.process_message( status )

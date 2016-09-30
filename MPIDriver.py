@@ -35,6 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--batch', help='batch size', default=100, type=int)
     parser.add_argument('--synchronous',help='run in synchronous mode',action='store_true')
+    parser.add_argument('--easgd',help='use Elastic Averaging SGD',action='store_true')
     parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
             type=int, default=-1)
     parser.add_argument('--features-name', help='name of HDF5 dataset with input features',
@@ -87,7 +88,11 @@ if __name__ == '__main__':
 
         model = load_model(model_name, load_weights=args.load_weights)
         model_arch = model.to_json()
-        algo = Algo('rmsprop', loss='binary_crossentropy', validate_every=validate_every ) 
+        if args.easgd:
+            algo = Algo(None, loss='binary_crossentropy', validate_every=validate_every,
+                    mode='easgd', worker_lr=0.01, elastic_force=0.9/(comm.Get_size()-1)) 
+        else:
+            algo = Algo('rmsprop', loss='binary_crossentropy', validate_every=validate_every ) 
         print algo
         weights = model.get_weights()
 
