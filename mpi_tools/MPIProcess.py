@@ -25,6 +25,8 @@ class MPIProcess(object):
            time_step: for keeping track of time
            callbacks_list: list of keras callbacks
            callbacks: keras CallbackList object holding the designated callbacks
+           callback_model: model used for callbacks
+           stop_training: becomes true when it is time to stop training
     """
 
     def __init__(self, parent_comm, parent_rank=None, data=None, callbacks=[]):
@@ -48,6 +50,7 @@ class MPIProcess(object):
         self.weights_shapes = None
         self.weights = None
         self.update = None
+        self.stop_training = False
         self.time_step = 0
         self.callbacks_list = callbacks
 
@@ -81,21 +84,28 @@ class MPIProcess(object):
             if not hasattr(self, par) or getattr(self, par) is None:
                 raise Error("%s not found!  Process %d does not seem to be set up correctly." % (par,self.rank))
 
-    def init_callbacks(self):
+    def init_callbacks(self, for_worker=False):
         """Prepares all keras callbacks to be used in training.
-            Automatically attaches a History callback to the end of the callback list."""
+            Automatically attaches a History callback to the end of the callback list.
+            If for_worker is True, leaves out callbacks that only make sense 
+            with validation enabled."""
         import keras.callbacks as cbks
+        remove_for_worker = [cbks.EarlyStopping, cbks.ModelCheckpoint]
+        if for_worker:
+            for obj in remove_for_worker:
+                self.callbacks_list = [ c for c in self.callbacks_list 
+                        if not isinstance(c, obj) ]
         self.model.history = cbks.History()
         self.callbacks = cbks.CallbackList( self.callbacks_list + [self.model.history] )
 
         # it's possible to callback a different model than self
         # (used by Sequential models)
         if hasattr(self.model, 'callback_model') and self.model.callback_model:
-            callback_model = self.model.callback_model
+            self.callback_model = self.model.callback_model
         else:
-            callback_model = self.model
-        self.callbacks._set_model(callback_model)
-        callback_model.stop_training = False
+            self.callback_model = self.model
+        self.callbacks._set_model(self.callback_model)
+        self.callback_model.stop_training = False
 
     def train(self):
         """To be implemented in derived classes"""
@@ -317,6 +327,9 @@ class MPIProcess(object):
     def recv_bool(self, comm=None, source=None):
         return self.recv( tag='bool', comm=comm, source=source )
 
+    def recv_exit_from_parent(self):
+        return self.parent_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
+
     def bcast_weights(self, comm, root=0):
         """Broadcast weights layer by layer on communicator comm from the indicated root rank"""
         for w in self.weights:
@@ -355,9 +368,12 @@ class MPIWorker(MPIProcess):
         """
         self.check_sanity()
         self.compile_model()
-        self.init_callbacks()
+        self.init_callbacks(for_worker=True)
         self.callbacks.on_train_begin()
         self.await_signal_from_parent()
+
+        # periodically check this request to see if the parent has told us to stop training
+        exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
             print "MPIWorker %d beginning epoch %d" % (self.rank, epoch)
             self.callbacks.on_epoch_begin(epoch)
@@ -367,7 +383,13 @@ class MPIWorker(MPIProcess):
                 self.compute_update()
                 self.do_send_sequence()
                 self.callbacks.on_batch_end(i_batch, batch_logs)
-            self.callbacks.on_epoch_end(epoch)
+                if exit_request.Test():
+                    self.stop_training = True
+                    print "MPIWorker %d received exit request from master" % self.rank
+                    break
+            if self.stop_training:
+                break
+            self.callbacks.on_epoch_end(epoch, batch_logs) # send logs from the last batch
         print "MPIWorker %d signing off" % self.rank
         self.send_exit_to_parent()
         self.callbacks.on_train_end()
@@ -397,7 +419,7 @@ class MPIMaster(MPIProcess):
           has_parent: boolean indicating if this process has a parent process
           num_workers: integer giving the number of workers that work for this master
           best_val_loss: best validation loss computed so far during training
-          running_workers: number of workers not yet done training
+          running_workers: list of workers not yet done training
           waiting_workers_list: list of workers that sent updates and are now waiting
           num_sync_workers: number of worker updates to receive before performing an update
           update_tag: MPI tag to expect when workers send updates
@@ -481,6 +503,7 @@ class MPIMaster(MPIProcess):
             if self.time_step % self.algo.validate_every == 0 and self.time_step > 0:
                 epoch_logs = self.validate()
                 self.callbacks.on_epoch_end(self.epoch, epoch_logs)
+                self.epoch += 1
                 self.callbacks.on_epoch_begin(self.epoch)
         else:
             self.sync_child(source)
@@ -489,7 +512,7 @@ class MPIMaster(MPIProcess):
         """Actions to take when a worker finishes training and returns its history"""
         key = "%d_%d" % (self.rank, worker_id)
         self.histories[key] = self.recv_history_from_child(worker_id)
-        self.running_workers -= 1
+        self.running_workers.remove(worker_id)
         self.num_sync_workers -= 1
 
     def process_message(self, status):
@@ -509,6 +532,12 @@ class MPIMaster(MPIProcess):
             raise ValueError("Tag %s not recognized" % tag)
         return tag
 
+    def shut_down_workers(self):
+        """Signal all running workers to shut down"""
+        for worker_id in self.running_workers:
+            print "Signaling worker %d to shut down" % worker_id
+            self.send_exit_to_child( worker_id )
+
     def train(self):
         """Broadcasts model information to children and signals them to start training.
             Receive messages from workers and processes each message until training is done.
@@ -517,19 +546,22 @@ class MPIMaster(MPIProcess):
         self.check_sanity()
         self.bcast_model_info( comm=self.child_comm )
         self.compile_model()
-        self.init_callbacks()
+        self.init_callbacks(for_worker=self.has_parent)
         self.callbacks.on_train_begin()
         self.signal_children()
 
         status = MPI.Status()
-        self.running_workers = self.num_workers
+        self.running_workers = range(1, self.num_workers+1)
         self.waiting_workers_list = []
         
         self.epoch = 0
         self.callbacks.on_epoch_begin(self.epoch)
-        while self.running_workers > 0:
+        while self.running_workers:
             self.recv_any_from_child(status)
             self.process_message( status )
+            if (not self.stop_training) and self.callback_model.stop_training:
+                self.shut_down_workers()
+                self.stop_training = True
         print "MPIMaster %d done training" % self.rank
         self.histories[str(self.rank)] = self.model.history
         self.send_exit_to_parent()
@@ -538,10 +570,9 @@ class MPIMaster(MPIProcess):
         if not self.has_parent:
             return self.histories
 
-    def validate(self, save_if_best=True):
+    def validate(self):
         """Compute the loss on the validation data.
-            If save_if_best is true, save the model if the validation loss is the 
-            smallest so far."""
+            Return a dictionary of validation metrics."""
         if self.has_parent:
             return {}
         self.model.set_weights(self.weights)
@@ -554,26 +585,11 @@ class MPIMaster(MPIProcess):
         val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
         print "Validation metrics:",
         self.print_metrics(val_metrics)
-        if save_if_best:
-            self.save_model_if_best(val_metrics)
         return self.get_logs(val_metrics, val=True)
 
     def apply_update(self):
         """Updates weights according to update received from worker process"""
         self.weights = self.algo.apply_update( self.weights, self.update )
-
-    def save_model_if_best(self, val_metrics):
-        """If the validation loss is the lowest on record, save the model.
-            The output file name is mpi_learn_model.h5"""
-        if hasattr( val_metrics, '__getitem__'):
-            val_loss = val_metrics[0]
-        else:
-            val_loss = val_metrics
-
-        if self.best_val_loss is None or val_loss < self.best_val_loss:
-            self.best_val_loss = val_loss
-            print "Saving model to mpi_learn_model.h5"
-            self.model.save('mpi_learn_model.h5')
 
     ### MPI-related functions below
 
@@ -590,3 +606,6 @@ class MPIMaster(MPIProcess):
 
     def recv_history_from_child(self, child):
         return self.recv( tag='history', source=child, comm=self.child_comm )
+
+    def send_exit_to_child(self, child):
+        return self.child_comm.isend( None, dest=child, tag=self.lookup_mpi_tag('exit') )

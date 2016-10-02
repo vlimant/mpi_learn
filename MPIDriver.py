@@ -95,6 +95,8 @@ if __name__ == '__main__':
     if comm.Get_rank() == 0:
         validate_every = data.count_data()/args.batch 
     callbacks = []
+    callbacks.append( cbks.ModelCheckpoint( model_name+"_mpi_learn_result.h5", 
+        monitor='val_loss', verbose=1 ) )
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
