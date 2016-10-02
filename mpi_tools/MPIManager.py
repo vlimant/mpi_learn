@@ -2,6 +2,7 @@
 
 from __future__ import division
 import math
+from mpi4py import MPI
 
 from Data import H5Data
 from GPU import get_num_gpus
@@ -29,13 +30,22 @@ def get_device(comm, num_masters=1, gpu_limit=-1):
     """Arguments:
         comm: MPI intracommunicator containing all processes
         num_masters: number of processes that will be assigned as masters
-       Returns device name 'cpu' or 'gpuN' appropriate for use with theano"""
+        gpu_limit: maximum number of gpus to use on one host
+       Returns device name 'cpu' or 'gpuN' appropriate for use with theano""" 
     rank = comm.Get_rank()
     worker_ranks = get_worker_ranks( comm, num_masters )
-    if rank in worker_ranks:
-        worker_id = worker_ranks.index( rank )
+
+    # Get the ranks of the other processes that share the same host
+    # and determine which GPU to take on the host
+    host = MPI.Get_processor_name()
+    hosts = comm.allgather(host)
+    workers_sharing_host = [ i for i in worker_ranks
+            if hosts[i] == host ]
+    if rank in workers_sharing_host:
+        worker_id = workers_sharing_host.index( rank )
     else:
         worker_id = -1
+
     max_gpu = get_num_gpus() - 1
     if gpu_limit >= 0:
         max_gpu = min( max_gpu, gpu_limit-1 )
