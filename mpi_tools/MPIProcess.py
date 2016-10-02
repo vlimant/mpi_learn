@@ -23,9 +23,11 @@ class MPIProcess(object):
            update: latest update obtained from training
            data: Data object used to generate training or validation data
            time_step: for keeping track of time
+           callbacks_list: list of keras callbacks
+           callbacks: keras CallbackList object holding the designated callbacks
     """
 
-    def __init__(self, parent_comm, parent_rank=None, data=None):
+    def __init__(self, parent_comm, parent_rank=None, data=None, callbacks=[]):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, model information should be set manually
             with set_model_info() and training should be launched with train().
@@ -34,6 +36,7 @@ class MPIProcess(object):
               parent_comm: MPI intracommunicator used to communicate with parent
               parent_rank (integer): rank of this node's parent in parent_comm
               data: Data object used to generate training or validation data
+              callbacks_list: list of keras callbacks
         """
         self.parent_comm = parent_comm 
         self.parent_rank = parent_rank
@@ -46,6 +49,7 @@ class MPIProcess(object):
         self.weights = None
         self.update = None
         self.time_step = 0
+        self.callbacks_list = callbacks
 
         if self.parent_rank is not None:
             self.bcast_model_info( self.parent_comm )
@@ -77,6 +81,22 @@ class MPIProcess(object):
             if not hasattr(self, par) or getattr(self, par) is None:
                 raise Error("%s not found!  Process %d does not seem to be set up correctly." % (par,self.rank))
 
+    def init_callbacks(self):
+        """Prepares all keras callbacks to be used in training.
+            Automatically attaches a History callback to the end of the callback list."""
+        import keras.callbacks as cbks
+        self.model.history = cbks.History()
+        self.callbacks = cbks.CallbackList( self.callbacks_list + [self.model.history] )
+
+        # it's possible to callback a different model than self
+        # (used by Sequential models)
+        if hasattr(self.model, 'callback_model') and self.model.callback_model:
+            callback_model = self.model.callback_model
+        else:
+            callback_model = self.model
+        self.callbacks._set_model(callback_model)
+        callback_model.stop_training = False
+
     def train(self):
         """To be implemented in derived classes"""
         raise NotImplementedError
@@ -94,9 +114,19 @@ class MPIProcess(object):
         if len(names) == 1:
             print "%s: %.3f" % (names[0],metrics)
         else:
-            for i,m in enumerate(names):
-                print "%s: %.3f" % (m,metrics[i]),
+            for name, metric in zip( names, metrics ):
+                print "%s: %.3f" % (name,metric),
             print ""
+
+    def get_logs(self, metrics, val=False):
+        """Get dictionary of logs computed during training.
+            If val is True, appends 'val' to the beginning of each metric name"""
+        if val:
+            return { 'val_'+name:metric for name, metric in 
+                    zip( self.model.metrics_names, metrics ) }
+        else:
+            return { name:metric for name, metric in 
+                    zip( self.model.metrics_names, metrics ) }
 
     def do_send_sequence(self):
         """Actions to take when sending an update to parent:
@@ -121,6 +151,7 @@ class MPIProcess(object):
             'begin_update'  : 3,
             'time':           4,
             'bool':           5,
+            'history':        6,
             'model_arch':     10,
             'algo':           11,
             'weights_shapes': 12,
@@ -209,6 +240,14 @@ class MPIProcess(object):
         """Send exit tag to parent process, if parent process exists"""
         if self.parent_rank is not None:
             self.send( None, 'exit' )
+
+    def send_history_to_parent(self):
+        """Send keras history or dict of keras histories"""
+        if self.parent_rank is not None:
+            if hasattr(self, 'histories'):
+                self.send( obj=self.histories, tag='history' )
+            else:
+                self.send( obj=self.model.history, tag='history' )
 
     def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, check_permission=False):
         """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
@@ -299,7 +338,7 @@ class MPIWorker(MPIProcess):
           num_epochs: integer giving the number of epochs to train for
     """
 
-    def __init__(self, data, parent_comm, parent_rank=None, num_epochs=1):
+    def __init__(self, data, parent_comm, parent_rank=None, num_epochs=1, callbacks=[]):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
         if parent_rank is None:
@@ -307,7 +346,7 @@ class MPIWorker(MPIProcess):
         self.num_epochs = num_epochs
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
         print info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size())
-        super(MPIWorker, self).__init__( parent_comm, parent_rank, data=data )
+        super(MPIWorker, self).__init__( parent_comm, parent_rank, data=data, callbacks=callbacks )
 
     def train(self):
         """Compile the model, then wait for the signal to train. Then train for num_epochs epochs.
@@ -316,21 +355,30 @@ class MPIWorker(MPIProcess):
         """
         self.check_sanity()
         self.compile_model()
+        self.init_callbacks()
+        self.callbacks.on_train_begin()
         self.await_signal_from_parent()
         for epoch in range(self.num_epochs):
             print "MPIWorker %d beginning epoch %d" % (self.rank, epoch)
-            for batch in self.data.generate_data():
-                self.train_on_batch(batch)
+            self.callbacks.on_epoch_begin(epoch)
+            for i_batch, batch in enumerate(self.data.generate_data()):
+                self.callbacks.on_batch_begin(i_batch)
+                batch_logs = self.train_on_batch(batch)
                 self.compute_update()
                 self.do_send_sequence()
+                self.callbacks.on_batch_end(i_batch, batch_logs)
+            self.callbacks.on_epoch_end(epoch)
         print "MPIWorker %d signing off" % self.rank
         self.send_exit_to_parent()
+        self.callbacks.on_train_end()
+        self.send_history_to_parent()
 
     def train_on_batch(self, batch):
         """Train on a single batch"""
         train_loss = self.model.train_on_batch( batch[0], batch[1] )
         print "Worker %d metrics:"%self.rank,
         self.print_metrics(train_loss)
+        return self.get_logs(train_loss)
 
     def compute_update(self):
         """Compute the update from the new and old sets of model weights"""
@@ -353,10 +401,12 @@ class MPIMaster(MPIProcess):
           waiting_workers_list: list of workers that sent updates and are now waiting
           num_sync_workers: number of worker updates to receive before performing an update
           update_tag: MPI tag to expect when workers send updates
+          histories: model histories collected from workers
+          epoch: current epoch number
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, data=None,
-            num_sync_workers=1):
+            num_sync_workers=1, callbacks=[]):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -366,6 +416,7 @@ class MPIMaster(MPIProcess):
         if parent_rank is not None:
             self.has_parent = True
         self.best_val_loss = None
+        self.histories = {}
         self.num_workers = child_comm.Get_size() - 1 #all processes but one are workers
         self.num_sync_workers = num_sync_workers
         info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
@@ -373,7 +424,7 @@ class MPIMaster(MPIProcess):
         print "Will wait for updates from %d workers before synchronizing" % self.num_sync_workers
         print info.format(parent_comm.Get_rank(),parent_rank,parent_comm.Get_size(), 
                 child_comm.Get_size())
-        super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data )
+        super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, callbacks=callbacks )
 
     def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""
@@ -428,9 +479,18 @@ class MPIMaster(MPIProcess):
                     self.sync_children()
                 self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
             if self.time_step % self.algo.validate_every == 0 and self.time_step > 0:
-                self.validate()
+                epoch_logs = self.validate()
+                self.callbacks.on_epoch_end(self.epoch, epoch_logs)
+                self.callbacks.on_epoch_begin(self.epoch)
         else:
             self.sync_child(source)
+
+    def do_worker_finish_sequence(self, worker_id):
+        """Actions to take when a worker finishes training and returns its history"""
+        key = "%d_%d" % (self.rank, worker_id)
+        self.histories[key] = self.recv_history_from_child(worker_id)
+        self.running_workers -= 1
+        self.num_sync_workers -= 1
 
     def process_message(self, status):
         """Extracts message source and tag from the MPI status object and processes the message. 
@@ -444,8 +504,7 @@ class MPIMaster(MPIProcess):
         if tag == 'begin_update':
             self.do_update_sequence(source)
         elif tag == 'exit':
-            self.running_workers -= 1 
-            self.num_sync_workers -= 1
+            self.do_worker_finish_sequence(source)
         else:
             raise ValueError("Tag %s not recognized" % tag)
         return tag
@@ -458,37 +517,46 @@ class MPIMaster(MPIProcess):
         self.check_sanity()
         self.bcast_model_info( comm=self.child_comm )
         self.compile_model()
+        self.init_callbacks()
+        self.callbacks.on_train_begin()
         self.signal_children()
 
         status = MPI.Status()
         self.running_workers = self.num_workers
         self.waiting_workers_list = []
         
+        self.epoch = 0
+        self.callbacks.on_epoch_begin(self.epoch)
         while self.running_workers > 0:
             self.recv_any_from_child(status)
             self.process_message( status )
         print "MPIMaster %d done training" % self.rank
-        self.validate()
+        self.histories[str(self.rank)] = self.model.history
         self.send_exit_to_parent()
+        self.callbacks.on_train_end()
+        self.send_history_to_parent()
+        if not self.has_parent:
+            return self.histories
 
     def validate(self, save_if_best=True):
         """Compute the loss on the validation data.
             If save_if_best is true, save the model if the validation loss is the 
             smallest so far."""
         if self.has_parent:
-            return
+            return {}
         self.model.set_weights(self.weights)
 
-        n_batches = 0
-        val_metrics = [ 0.0 for i in range( len(self.model.metrics) ) ]
-        for batch in self.data.generate_data():
-            n_batches += 1
-            val_metrics = np.add( val_metrics, self.model.test_on_batch(*batch) )
-        val_metrics = np.divide( val_metrics, n_batches )
+        val_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
+        for i_batch, batch in enumerate(self.data.generate_data()):
+            new_val_metrics = self.model.test_on_batch(*batch)
+            for i in range(len(val_metrics)):
+                val_metrics[i] += new_val_metrics[i]
+        val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
         print "Validation metrics:",
         self.print_metrics(val_metrics)
         if save_if_best:
             self.save_model_if_best(val_metrics)
+        return self.get_logs(val_metrics, val=True)
 
     def apply_update(self):
         """Updates weights according to update received from worker process"""
@@ -519,3 +587,6 @@ class MPIMaster(MPIProcess):
             populated with information about received message"""
         self.recv( tag='any', source=MPI.ANY_SOURCE, status=status, comm=self.child_comm )
         return status
+
+    def recv_history_from_child(self, child):
+        return self.recv( tag='history', source=child, comm=self.child_comm )

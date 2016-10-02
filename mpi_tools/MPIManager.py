@@ -69,10 +69,11 @@ class MPIManager(object):
           is_master: boolean determining if this process is a master
           should_validate: boolean determining if this process should run training validation
           synchronous: whether or not to syncronize workers after each update
+          callbacks: keras callbacks to use during training
     """
 
     def __init__(self, comm, data, num_epochs, train_list, val_list, num_masters=1,
-            synchronous=False):
+            synchronous=False, callbacks=[]):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -84,6 +85,7 @@ class MPIManager(object):
             train_list: list of training data files
             val_list: list of validation data files
             synchronous: true if masters should operate in synchronous mode
+            callbacks: list of keras callback objects
         """
         self.data = data
         self.num_masters = num_masters
@@ -96,6 +98,7 @@ class MPIManager(object):
         self.train_list = train_list
         self.val_list = val_list
         self.synchronous = synchronous
+        self.callbacks = callbacks
         self.comm_block = None
         self.comm_masters = None
         self.is_master = None
@@ -140,11 +143,11 @@ class MPIManager(object):
             num_sync_workers = self.get_num_sync_workers(child_comm)
             self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
                     data=self.data, child_comm=child_comm, 
-                    num_sync_workers=num_sync_workers )
+                    num_sync_workers=num_sync_workers, callbacks=self.callbacks )
         else:
             self.set_train_data()
             self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=parent_rank, 
-                    num_epochs=self.num_epochs, data=self.data )
+                    num_epochs=self.num_epochs, data=self.data, callbacks=self.callbacks )
 
     def get_num_sync_workers(self, comm):
         """Returns the number of workers the master should wait for

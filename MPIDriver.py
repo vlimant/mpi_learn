@@ -26,11 +26,13 @@ def load_model(model_name, load_weights):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+
     # model arguments
     parser.add_argument('model_name', help=('will load model architecture from '
                                             '<model_name>_arch.json'))
     parser.add_argument('--load-weights',help='load weights from <model_name>_weights.h5',
             action='store_true')
+
     # training data arguments
     parser.add_argument('train_data', help='text file listing data inputs for training')
     parser.add_argument('val_data', help='text file listing data inputs for validation')
@@ -39,11 +41,13 @@ if __name__ == '__main__':
     parser.add_argument('--labels-name', help='name of HDF5 dataset with output labels',
             default='labels', dest='labels_name')
     parser.add_argument('--batch', help='batch size', default=100, type=int)
+
     # configuration of network topology
     parser.add_argument('--masters', help='number of master processes', default=1, type=int)
     parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
             type=int, default=-1)
     parser.add_argument('--synchronous',help='run in synchronous mode',action='store_true')
+
     # configuration of training process
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--optimizer',help='optimizer for master to use',default='rmsprop')
@@ -78,6 +82,7 @@ if __name__ == '__main__':
     for try_num in range(10):
         try:
             from keras.models import model_from_json
+            import keras.callbacks as cbks
             break
         except ValueError:
             print "Unable to import keras. Trying again: %d" % try_num
@@ -89,11 +94,12 @@ if __name__ == '__main__':
             features_name=args.features_name, labels_name=args.labels_name )
     if comm.Get_rank() == 0:
         validate_every = data.count_data()/args.batch 
+    callbacks = []
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
             train_list=train_list, val_list=val_list, num_masters=args.masters,
-            synchronous=args.synchronous )
+            synchronous=args.synchronous, callbacks=callbacks )
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
@@ -111,5 +117,13 @@ if __name__ == '__main__':
         weights = model.get_weights()
 
         manager.process.set_model_info( model_arch, algo, weights )
-        manager.process.train() 
+        histories = manager.process.train() 
         manager.free_comms()
+
+        print "\nHistory for each MPI process:"
+        for key,history in histories.iteritems():
+            if hasattr( history, 'history' ):
+                print key,":",history.history
+            else:
+                for k, h in history.iteritems():
+                    print k,":",h.history
