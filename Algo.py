@@ -9,7 +9,8 @@ class Algo(object):
           optimizer_name: name of the optimizer
           staleness: difference in time step between master and most recent worker's update
           worker_update_type: whether to send weights or gradients to parent process
-          send_before_apply: whether to send weights before applying update (used for EASGD)
+          send_before_apply: whether to send weights before applying update 
+            (used for Elastic Averaging SGD)
         See __init__ for list of other supported attributes
           """
 
@@ -17,8 +18,9 @@ class Algo(object):
     supported_opts = {'loss':'binary_crossentropy',
                       'validate_every':1000,
                       'mode':'sgd',
-                      'worker_lr':1.0,
+                      'worker_optimizer':'sgd',
                       'elastic_force':None,
+                      'elastic_lr':1.0,
                       }
 
     def __init__(self, optimizer, **kwargs):
@@ -28,8 +30,12 @@ class Algo(object):
                loss: string naming the loss function to be used for training
                validate_every: number of time steps to wait between validations
                mode: 'sgd' or 'easgd' are supported
-               worker_lr: SGD learning rate for worker
-               elastic_force: alpha constant in the EASGD algorithm
+               worker_optimizer: string indicating which optimizer the worker should use.
+                    (note that if worker_optimizer is sgd and worker_lr is 1, the worker's
+                     updates will be the gradients computed at each time step, which is 
+                     what is needed for many algorithms.)
+               elastic_force: alpha constant in the Elastic Averaging SGD algorithm
+               elastic_lr: EASGD learning rate for worker
             Optimizer configuration options should be provided as additional
             named arguments (check your chosen optimizer class for details)."""
         for opt in self.supported_opts:
@@ -54,7 +60,8 @@ class Algo(object):
             self.send_before_apply = False
 
     def __str__(self):
-        strs = [ opt+": "+str(getattr(self, opt)) for opt in self.supported_opts ]
+        strs = [ "optimizer: "+str(self.optimizer_name) ]
+        strs += [ opt+": "+str(getattr(self, opt)) for opt in self.supported_opts ]
         return '\n'.join(strs)
 
     ### For Worker ###
@@ -63,9 +70,12 @@ class Algo(object):
         """Compile the model. Workers are only responsible for computing the gradient and 
             sending it to the master, so we use ordinary SGD with learning rate 1 and 
             compute the gradient as (old weights - new weights) after each batch"""
-        from keras.optimizers import SGD
-        sgd = SGD(lr=self.worker_lr)
-        model.compile( loss=self.loss, optimizer=sgd, metrics=['accuracy'] )
+        if self.worker_optimizer == 'sgd':
+            from keras.optimizers import SGD
+            optimizer = SGD(lr=self.elastic_lr)
+        else:
+            optimizer = self.worker_optimizer 
+        model.compile( loss=self.loss, optimizer=optimizer, metrics=['accuracy'] )
 
     def compute_update(self, cur_weights, new_weights):
         """Computes the update to be sent to the parent process"""

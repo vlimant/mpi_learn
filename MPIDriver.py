@@ -26,23 +26,35 @@ def load_model(model_name, load_weights):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    # model arguments
     parser.add_argument('model_name', help=('will load model architecture from '
                                             '<model_name>_arch.json'))
+    parser.add_argument('--load-weights',help='load weights from <model_name>_weights.h5',
+            action='store_true')
+    # training data arguments
     parser.add_argument('train_data', help='text file listing data inputs for training')
     parser.add_argument('val_data', help='text file listing data inputs for validation')
-    parser.add_argument('--load-weights',help='load weights from <model_name>_weights.h5',action='store_true')
-    parser.add_argument('--masters', help='number of master processes', default=1, type=int)
-    parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
-    parser.add_argument('--batch', help='batch size', default=100, type=int)
-    parser.add_argument('--synchronous',help='run in synchronous mode',action='store_true')
-    parser.add_argument('--easgd',help='use Elastic Averaging SGD',action='store_true')
-    parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
-            type=int, default=-1)
     parser.add_argument('--features-name', help='name of HDF5 dataset with input features',
             default='features', dest='features_name')
     parser.add_argument('--labels-name', help='name of HDF5 dataset with output labels',
             default='labels', dest='labels_name')
-    args = parser.parse_args()
+    parser.add_argument('--batch', help='batch size', default=100, type=int)
+    # configuration of network topology
+    parser.add_argument('--masters', help='number of master processes', default=1, type=int)
+    parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
+            type=int, default=-1)
+    parser.add_argument('--synchronous',help='run in synchronous mode',action='store_true')
+    # configuration of training process
+    parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
+    parser.add_argument('--optimizer',help='optimizer for master to use',default='rmsprop')
+    parser.add_argument('--loss',help='loss function',default='binary_crossentropy')
+    parser.add_argument('--worker-optimizer',help='optimizer for workers to use',
+            dest='worker_optimizer', default='sgd')
+    parser.add_argument('--easgd',help='use Elastic Averaging SGD',action='store_true')
+    parser.add_argument('--elastic-force',help='beta parameter for EASGD',type=float,default=0.9)
+    parser.add_argument('--elastic-lr',help='worker SGD learning rate for EASGD',
+            type=float, default=1.0, dest='elastic_lr')
+
     args = parser.parse_args()
     model_name = args.model_name
 
@@ -85,14 +97,16 @@ if __name__ == '__main__':
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
-
         model = load_model(model_name, load_weights=args.load_weights)
         model_arch = model.to_json()
         if args.easgd:
-            algo = Algo(None, loss='binary_crossentropy', validate_every=validate_every,
-                    mode='easgd', worker_lr=0.01, elastic_force=0.9/(comm.Get_size()-1)) 
+            algo = Algo(None, loss=args.loss, validate_every=validate_every,
+                    mode='easgd', elastic_lr=args.elastic_lr, 
+                    worker_optimizer=args.worker_optimizer,
+                    elastic_force=args.elastic_force/(comm.Get_size()-1)) 
         else:
-            algo = Algo('rmsprop', loss='binary_crossentropy', validate_every=validate_every ) 
+            algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
+                    worker_optimizer=args.worker_optimizer) 
         print algo
         weights = model.get_weights()
 
