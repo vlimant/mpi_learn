@@ -142,7 +142,7 @@ class MPIManager(object):
             self.set_val_data()
             num_sync_workers = self.get_num_sync_workers(child_comm)
             self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
-                    data=self.data, child_comm=child_comm, 
+                    data=self.data, child_comm=child_comm, num_epochs=self.num_epochs,
                     num_sync_workers=num_sync_workers, callbacks=self.callbacks )
         else:
             self.set_train_data()

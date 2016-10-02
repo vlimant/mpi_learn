@@ -35,18 +35,24 @@ class Data(object):
             
     def generate_data(self):
        """Yields batches of training data until none are left."""
+       leftovers = None
        for cur_file_name in self.file_names:
            cur_file_features, cur_file_labels = self.load_data(cur_file_name)
+           # concatenate any leftover data from the previous file
+           if leftovers is not None:
+               cur_file_features = self.concat_data( leftovers[0], cur_file_features )
+               cur_file_labels = self.concat_data( leftovers[1], cur_file_labels )
+               leftovers = None
            num_in_file = self.get_num_samples( cur_file_features )
 
-           # We get all available batches in this file, then move on to the next file.
-           # If the batch size does not evenly divide the number of examples per file,
-           # then some examples at the end of each file will go unused.  
            for cur_pos in range(0, num_in_file, self.batch_size):
                next_pos = cur_pos + self.batch_size 
-               if next_pos < num_in_file:
+               if next_pos <= num_in_file:
                    yield ( self.get_batch( cur_file_features, cur_pos, next_pos ),
                            self.get_batch( cur_file_labels, cur_pos, next_pos ) )
+               else:
+                   leftovers = ( self.get_batch( cur_file_features, cur_pos, num_in_file ),
+                                 self.get_batch( cur_file_labels, cur_pos, num_in_file ) )
 
     def count_data(self):
         """Counts the number of data points across all files"""
@@ -62,6 +68,15 @@ class Data(object):
             return data[start_pos:end_pos] 
         else:
             return [ arr[start_pos:end_pos] for arr in data ]
+
+    def concat_data(self, data1, data2):
+        """Input: data1 as numpy array or list of numpy arrays.  data2 in the same format.
+           Returns: numpy array or list of arrays, in which each array in data1 has been
+             concatenated with the corresponding array in data2"""
+        if self.is_numpy_array(data1):
+            return np.concatenate( (data1, data2) )
+        else:
+            return [ self.concat_data( (d1, d2) ) for d1,d2 in zip(data1,data2) ]
 
     def get_num_samples(self, data):
         """Input: dataset consisting of a numpy array or list of numpy arrays.
