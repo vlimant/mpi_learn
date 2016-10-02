@@ -6,7 +6,7 @@ import sys,os
 import numpy as np
 import argparse
 from mpi4py import MPI
-from time import sleep
+from time import time,sleep
 
 from mpi_tools.MPIManager import MPIManager, get_device
 from Algo import Algo
@@ -119,8 +119,11 @@ if __name__ == '__main__':
         weights = model.get_weights()
 
         manager.process.set_model_info( model_arch, algo, weights )
+        t_0 = time()
         histories = manager.process.train() 
+        delta_t = time() - t_0
         manager.free_comms()
+        print "Training finished in %.3f seconds" % delta_t
 
         print "\nHistory for each MPI process:"
         for key,history in histories.iteritems():
