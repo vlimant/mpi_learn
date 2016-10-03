@@ -127,8 +127,4 @@ if __name__ == '__main__':
 
         print "\nHistory for each MPI process:"
         for key,history in histories.iteritems():
-            if hasattr( history, 'history' ):
-                print key,":",history.history
-            else:
-                for k, h in history.iteritems():
-                    print k,":",h.history
+            print key,":",history

@@ -135,10 +135,10 @@ class MPIProcess(object):
         """Get dictionary of logs computed during training.
             If val is True, appends 'val' to the beginning of each metric name"""
         if val:
-            return { 'val_'+name:metric for name, metric in 
+            return { 'val_'+name:np.asscalar(metric) for name, metric in 
                     zip( self.model.metrics_names, metrics ) }
         else:
-            return { name:metric for name, metric in 
+            return { name:np.asscalar(metric) for name, metric in 
                     zip( self.model.metrics_names, metrics ) }
 
     def do_send_sequence(self):
@@ -260,7 +260,7 @@ class MPIProcess(object):
             if hasattr(self, 'histories'):
                 self.send( obj=self.histories, tag='history' )
             else:
-                self.send( obj=self.model.history, tag='history' )
+                self.send( obj=self.model.history.history, tag='history' )
 
     def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, check_permission=False):
         """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
@@ -569,7 +569,7 @@ class MPIMaster(MPIProcess):
         if self.epoch < self.num_epochs:
             epoch_logs = self.validate()
             self.callbacks.on_epoch_end(self.epoch, epoch_logs)
-        self.histories[str(self.rank)] = self.model.history
+        self.histories[str(self.rank)] = self.model.history.history
         self.send_exit_to_parent()
         self.callbacks.on_train_end()
         self.send_history_to_parent()
