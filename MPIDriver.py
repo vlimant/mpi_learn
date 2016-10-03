@@ -5,6 +5,7 @@
 import sys,os
 import numpy as np
 import argparse
+import json
 from mpi4py import MPI
 from time import time,sleep
 
@@ -32,6 +33,8 @@ if __name__ == '__main__':
                                             '<model_name>_arch.json'))
     parser.add_argument('--load-weights',help='load weights from <model_name>_weights.h5',
             action='store_true')
+    parser.add_argument('--trial-name', help='descriptive name for trial', 
+            default='train', dest='trial_name')
 
     # training data arguments
     parser.add_argument('train_data', help='text file listing data inputs for training')
@@ -95,7 +98,7 @@ if __name__ == '__main__':
     if comm.Get_rank() == 0:
         validate_every = data.count_data()/args.batch 
     callbacks = []
-    callbacks.append( cbks.ModelCheckpoint( model_name+"_mpi_learn_result.h5", 
+    callbacks.append( cbks.ModelCheckpoint( '_'.join([model_name,args.trial_name,"mpi_learn_result.h5"]), 
         monitor='val_loss', verbose=1 ) )
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
@@ -125,6 +128,12 @@ if __name__ == '__main__':
         manager.free_comms()
         print "Training finished in %.3f seconds" % delta_t
 
-        print "\nHistory for each MPI process:"
-        for key,history in histories.iteritems():
-            print key,":",history
+        # Make output dictionary
+        out_dict = { "args":vars(args),
+                     "history":histories,
+                     "train_time":delta_t,
+                     }
+        json_name = '_'.join([model_name,args.trial_name,"history.json"]) 
+        with open( json_name, 'w') as out_file:
+            out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
+        print "Wrote trial information to",json_name
