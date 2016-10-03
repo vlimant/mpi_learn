@@ -76,7 +76,7 @@ class Data(object):
         if self.is_numpy_array(data1):
             return np.concatenate( (data1, data2) )
         else:
-            return [ self.concat_data( (d1, d2) ) for d1,d2 in zip(data1,data2) ]
+            return [ self.concat_data( d1, d2 ) for d1,d2 in zip(data1,data2) ]
 
     def get_num_samples(self, data):
         """Input: dataset consisting of a numpy array or list of numpy arrays.
