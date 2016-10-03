@@ -149,9 +149,12 @@ class MPIProcess(object):
         self.sync_with_master()
 
     def sync_with_master(self):
-        self.time_step = self.recv_time_step()
-        self.recv_weights()
-        self.algo.set_worker_model_weights( self.model, self.weights )
+        will_sync = self.algo.should_sync()
+        self.send_bool( will_sync )
+        if will_sync:
+            self.time_step = self.recv_time_step()
+            self.recv_weights()
+            self.algo.set_worker_model_weights( self.model, self.weights )
 
     ### MPI-related functions below ###
 
@@ -468,8 +471,10 @@ class MPIMaster(MPIProcess):
             self.sync_child(child)
 
     def sync_child(self, child):
-        self.send_time_step( dest=child, comm=self.child_comm )
-        self.send_weights( dest=child, comm=self.child_comm )
+        will_sync = self.recv_bool( source=child, comm=self.child_comm )
+        if will_sync:
+            self.send_time_step( dest=child, comm=self.child_comm )
+            self.send_weights( dest=child, comm=self.child_comm )
 
     def sync_parent(self):
         if self.has_parent:

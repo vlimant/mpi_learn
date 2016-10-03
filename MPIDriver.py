@@ -57,6 +57,8 @@ if __name__ == '__main__':
     parser.add_argument('--loss',help='loss function',default='binary_crossentropy')
     parser.add_argument('--worker-optimizer',help='optimizer for workers to use',
             dest='worker_optimizer', default='sgd')
+    parser.add_argument('--sync-every', help='how often to sync weights with master', 
+            default=1, type=int, dest='sync_every')
     parser.add_argument('--easgd',help='use Elastic Averaging SGD',action='store_true')
     parser.add_argument('--elastic-force',help='beta parameter for EASGD',type=float,default=0.9)
     parser.add_argument('--elastic-lr',help='worker SGD learning rate for EASGD',
@@ -98,7 +100,8 @@ if __name__ == '__main__':
     if comm.Get_rank() == 0:
         validate_every = data.count_data()/args.batch 
     callbacks = []
-    callbacks.append( cbks.ModelCheckpoint( '_'.join([model_name,args.trial_name,"mpi_learn_result.h5"]), 
+    callbacks.append( cbks.ModelCheckpoint( '_'.join([
+        model_name,args.trial_name,"mpi_learn_result.h5"]), 
         monitor='val_loss', verbose=1 ) )
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
@@ -112,12 +115,12 @@ if __name__ == '__main__':
         model_arch = model.to_json()
         if args.easgd:
             algo = Algo(None, loss=args.loss, validate_every=validate_every,
-                    mode='easgd', elastic_lr=args.elastic_lr, 
+                    mode='easgd', elastic_lr=args.elastic_lr, sync_every=args.sync_every,
                     worker_optimizer=args.worker_optimizer,
                     elastic_force=args.elastic_force/(comm.Get_size()-1)) 
         else:
             algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
-                    worker_optimizer=args.worker_optimizer) 
+                    sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
         print algo
         weights = model.get_weights()
 

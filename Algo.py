@@ -10,6 +10,7 @@ class Algo(object):
           staleness: difference in time step between master and most recent worker's update
           worker_update_type: whether to send weights or gradients to parent process
           send_before_apply: whether to send weights before applying update 
+          step_counter: counts time steps to determine when to sync
             (used for Elastic Averaging SGD)
         See __init__ for list of other supported attributes
           """
@@ -17,6 +18,7 @@ class Algo(object):
     # available options and their default values
     supported_opts = {'loss':'binary_crossentropy',
                       'validate_every':1000,
+                      'sync_every':1,
                       'mode':'sgd',
                       'worker_optimizer':'sgd',
                       'elastic_force':None,
@@ -29,6 +31,7 @@ class Algo(object):
             Available arguments are:
                loss: string naming the loss function to be used for training
                validate_every: number of time steps to wait between validations
+               sync_every: number of time steps to wait before getting weights from parent
                mode: 'sgd' or 'easgd' are supported
                worker_optimizer: string indicating which optimizer the worker should use.
                     (note that if worker_optimizer is sgd and worker_lr is 1, the worker's
@@ -52,6 +55,7 @@ class Algo(object):
         else:
             self.optimizer = None
 
+        self.step_counter = 0
         if self.mode == 'easgd':
             self.worker_update_type = 'weights'
             self.send_before_apply = True
@@ -102,6 +106,11 @@ class Algo(object):
             new_w = cur_w - self.elastic_force * np.subtract( cur_w, other_w )
             new_weights.append( new_w )
         return new_weights
+
+    def should_sync(self):
+        """Determine whether to pull weights from the master"""
+        self.step_counter += 1
+        return self.step_counter % self.sync_every == 0
 
     ### For Master ###
 
