@@ -1,11 +1,11 @@
-### MPIManager class 
+### MPIManager class and associated functions
 
 from __future__ import division
 import math
 from mpi4py import MPI
 
-from ..Data import H5Data
-from ..GPU import get_num_gpus
+from ..train.data import H5Data
+from ..utils import get_num_gpus
 
 def get_master_ranks(comm, num_masters=1):
     """Arguments: 
@@ -147,7 +147,7 @@ class MPIManager(object):
                 parent_rank = None
 
         # Process initialization
-        from .MPIProcess import MPIWorker, MPIMaster
+        from .process import MPIWorker, MPIMaster
         if self.is_master:
             self.set_val_data()
             num_sync_workers = self.get_num_sync_workers(child_comm)

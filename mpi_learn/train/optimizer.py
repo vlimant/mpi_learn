@@ -1,6 +1,8 @@
+### Optimizers used to update master process weights
+
 import numpy as np
 
-from mpi_tools.Utils import weights_from_shapes
+from ..utils import weights_from_shapes
 
 class Optimizer(object):
     """Base class for optimization algorithms.

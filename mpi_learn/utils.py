@@ -1,4 +1,4 @@
-### Utilities for mpi_tools module
+### Utilities for mpi_learn module
 
 import numpy as np
 
@@ -13,3 +13,9 @@ def shapes_from_weights(weights):
     """Returns a list of tuples indicating the array shape of each layer of the NN"""
     return [ w.shape for w in weights ]
 
+def get_num_gpus():
+    """Returns the number of GPUs available"""
+    from pycuda import driver 
+    driver.init()
+    num_gpus = driver.Device.count()
+    return num_gpus

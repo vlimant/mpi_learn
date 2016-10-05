@@ -1,6 +1,8 @@
+### Algo class
+
 import numpy as np
 
-from Optimizer import get_optimizer
+from .optimizer import get_optimizer
 
 class Algo(object):
     """The Algo class contains all information about the training algorithm.

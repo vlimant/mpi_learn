@@ -1,4 +1,4 @@
-### Data class
+### Data class and associated helper methods
 
 import numpy as np
 import h5py

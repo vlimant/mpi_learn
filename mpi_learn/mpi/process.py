@@ -4,7 +4,7 @@ import os,sys
 import numpy as np
 from mpi4py import MPI
 
-from .Utils import Error, weights_from_shapes, shapes_from_weights
+from ..utils import Error, weights_from_shapes, shapes_from_weights
 
 ### Classes ###
 
