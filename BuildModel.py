@@ -4,7 +4,7 @@
 
 import argparse
 
-from test.Models import make_model
+from models.Models import make_model
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

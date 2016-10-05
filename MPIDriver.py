@@ -9,21 +9,10 @@ import json
 from mpi4py import MPI
 from time import time,sleep
 
-from mpi_tools.MPIManager import MPIManager, get_device
-from Algo import Algo
-from Data import H5Data
-
-def load_model(model_name, load_weights):
-    """Loads model architecture from <model_name>_arch.json.
-        If load_weights is True, gets model weights from
-        <model_name_weights.h5"""
-    json_filename = "%s_arch.json" % model_name
-    with open( json_filename ) as arch_file:
-        model = model_from_json( arch_file.readline() ) 
-    if load_weights:
-        weights_filename = "%s_weights.h5" % model_name
-        model.load_weights( weights_filename )
-    return model
+from mpi_learn.mpi.manager import MPIManager, get_device
+from mpi_learn.train.algo import Algo
+from mpi_learn.train.data import H5Data
+from mpi_learn.utils import import_keras, load_model
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -77,21 +66,8 @@ if __name__ == '__main__':
     device = get_device( comm, args.masters, gpu_limit=args.max_gpus )
     print "Process",comm.Get_rank(),"using device",device
     os.environ['THEANO_FLAGS'] = "device=%s,floatX=float32" % (device)
-    import theano
-
-    # There is an issue when multiple processes import Keras simultaneously --
-    # the file .keras/keras.json is sometimes not read correctly.  
-    # as a workaround, just try several times to import keras.
-    # Note: importing keras imports theano -- 
-    # impossible to change GPU choice after this.
-    for try_num in range(10):
-        try:
-            from keras.models import model_from_json
-            import keras.callbacks as cbks
-            break
-        except ValueError:
-            print "Unable to import keras. Trying again: %d" % try_num
-            sleep(0.1)
+    import_keras()
+    import keras.callbacks as cbks
 
     # We initialize the Data object with the training data list
     # so that we can use it to count the number of training examples
@@ -111,7 +87,10 @@ if __name__ == '__main__':
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
-        model = load_model(model_name, load_weights=args.load_weights)
+        weights_file = None
+        if args.load_weights:
+            weights_file = model_name+"_weights.h5"
+        model = load_model(model_name+"_arch.json", weights_file=weights_file)
         model_arch = model.to_json()
         if args.easgd:
             algo = Algo(None, loss=args.loss, validate_every=validate_every,
@@ -123,8 +102,8 @@ if __name__ == '__main__':
                     sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
         print algo
         weights = model.get_weights()
-
         manager.process.set_model_info( model_arch, algo, weights )
+
         t_0 = time()
         histories = manager.process.train() 
         delta_t = time() - t_0
