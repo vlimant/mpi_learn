@@ -9,9 +9,9 @@ import json
 from mpi4py import MPI
 from time import time,sleep
 
-from mpi_tools.MPIManager import MPIManager, get_device
-from Algo import Algo
-from Data import H5Data
+from .mpi_tools.MPIManager import MPIManager, get_device
+from .Algo import Algo
+from .Data import H5Data
 
 def load_model(model_name, load_weights):
     """Loads model architecture from <model_name>_arch.json.
