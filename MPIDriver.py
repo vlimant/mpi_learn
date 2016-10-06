@@ -52,6 +52,8 @@ if __name__ == '__main__':
     parser.add_argument('--elastic-force',help='beta parameter for EASGD',type=float,default=0.9)
     parser.add_argument('--elastic-lr',help='worker SGD learning rate for EASGD',
             type=float, default=1.0, dest='elastic_lr')
+    parser.add_argument('--elastic-momentum',help='worker SGD momentum for EASGD',
+            type=float, default=0, dest='elastic_momentum')
 
     args = parser.parse_args()
     model_name = args.model_name
@@ -94,9 +96,11 @@ if __name__ == '__main__':
         model_arch = model.to_json()
         if args.easgd:
             algo = Algo(None, loss=args.loss, validate_every=validate_every,
-                    mode='easgd', elastic_lr=args.elastic_lr, sync_every=args.sync_every,
+                    mode='easgd', sync_every=args.sync_every,
                     worker_optimizer=args.worker_optimizer,
-                    elastic_force=args.elastic_force/(comm.Get_size()-1)) 
+                    elastic_force=args.elastic_force/(comm.Get_size()-1),
+                    elastic_lr=args.elastic_lr, 
+                    elastic_momentum=args.elastic_momentum) 
         else:
             algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
                     sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 

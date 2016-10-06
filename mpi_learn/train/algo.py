@@ -25,6 +25,7 @@ class Algo(object):
                       'worker_optimizer':'sgd',
                       'elastic_force':None,
                       'elastic_lr':1.0,
+                      'elastic_momentum':0,
                       }
 
     def __init__(self, optimizer, **kwargs):
@@ -41,6 +42,7 @@ class Algo(object):
                      what is needed for many algorithms.)
                elastic_force: alpha constant in the Elastic Averaging SGD algorithm
                elastic_lr: EASGD learning rate for worker
+               elastic_momentum: EASGD momentum for worker
             Optimizer configuration options should be provided as additional
             named arguments (check your chosen optimizer class for details)."""
         for opt in self.supported_opts:
@@ -78,7 +80,10 @@ class Algo(object):
             compute the gradient as (old weights - new weights) after each batch"""
         if self.worker_optimizer == 'sgd':
             from keras.optimizers import SGD
-            optimizer = SGD(lr=self.elastic_lr)
+            if self.elastic_momentum > 0:
+                optimizer = SGD(lr=self.elastic_lr, momentum=self.elastic_momentum, nesterov=True)
+            else:
+                optimizer = SGD(lr=self.elastic_lr)
         else:
             optimizer = self.worker_optimizer 
         model.compile( loss=self.loss, optimizer=optimizer, metrics=['accuracy'] )
