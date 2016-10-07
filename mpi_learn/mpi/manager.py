@@ -225,7 +225,7 @@ class MPIManager(object):
     def make_comm_single(self,comm):
         """Create MPI communicator (Case 2): Rank 0 is master, all others are workers
             Sets is_master and worker_id attributes"""
-        self.comm_block = comm.Dup()
+        self.comm_block = comm
         self.is_master = ( self.comm_block.Get_rank() == 0 )
         self.should_validate = self.is_master
         if not self.is_master:
