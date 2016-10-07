@@ -601,9 +601,8 @@ class MPIMaster(MPIProcess):
             for i in range(len(val_metrics)):
                 val_metrics[i] += new_val_metrics[i]
         val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
-        if self.verbose:
-            print "Validation metrics:",
-            self.print_metrics(val_metrics)
+        print "Validation metrics:",
+        self.print_metrics(val_metrics)
         return self.get_logs(val_metrics, val=True)
 
     def apply_update(self):

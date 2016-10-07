@@ -26,20 +26,24 @@ def get_worker_ranks(comm, num_masters=1):
     master_ranks = get_master_ranks( comm, num_masters )
     return [ x for x in range(comm.Get_size()) if x not in master_ranks ]
 
-def get_device(comm, num_masters=1, gpu_limit=-1):
+def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     """Arguments:
         comm: MPI intracommunicator containing all processes
         num_masters: number of processes that will be assigned as masters
         gpu_limit: maximum number of gpus to use on one host
+        gpu_for_master: whether master processes should be given a gpu
        Returns device name 'cpu' or 'gpuN' appropriate for use with theano""" 
     rank = comm.Get_rank()
-    worker_ranks = get_worker_ranks( comm, num_masters )
+    if gpu_for_master:
+        gpu_ranks = range(comm.Get_size())
+    else:
+        gpu_ranks = get_worker_ranks( comm, num_masters )
 
     # Get the ranks of the other processes that share the same host
     # and determine which GPU to take on the host
     host = MPI.Get_processor_name()
     hosts = comm.allgather(host)
-    workers_sharing_host = [ i for i in worker_ranks
+    workers_sharing_host = [ i for i in gpu_ranks
             if hosts[i] == host ]
     if rank in workers_sharing_host:
         worker_id = workers_sharing_host.index( rank )
