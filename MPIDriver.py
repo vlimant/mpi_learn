@@ -16,6 +16,7 @@ from mpi_learn.utils import import_keras, load_model
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
+    parser.add_argument('--verbose',help='display metrics for each training batch',action='store_true')
 
     # model arguments
     parser.add_argument('model_name', help=('will load model architecture from '
@@ -85,7 +86,7 @@ if __name__ == '__main__':
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
             train_list=train_list, val_list=val_list, num_masters=args.masters,
-            synchronous=args.synchronous, callbacks=callbacks )
+            synchronous=args.synchronous, callbacks=callbacks, verbose=args.verbose )
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:

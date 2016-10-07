@@ -12,6 +12,7 @@ class MPIProcess(object):
     """Base class for processes that communicate with one another via MPI.  
 
        Attributes:
+           verbose: display verbose output
            parent_comm: MPI intracommunicator used to communicate with this process's parent
            parent_rank (integer): rank of this node's parent in parent_comm
            rank (integer): rank of this node in parent_comm
@@ -30,7 +31,8 @@ class MPIProcess(object):
            stop_training: becomes true when it is time to stop training
     """
 
-    def __init__(self, parent_comm, parent_rank=None, num_epochs=1, data=None, callbacks=[]):
+    def __init__(self, parent_comm, parent_rank=None, num_epochs=1, data=None, callbacks=[],
+            verbose=False):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, model information should be set manually
             with set_model_info() and training should be launched with train().
@@ -41,6 +43,7 @@ class MPIProcess(object):
               num_epochs: number of training epochs
               data: Data object used to generate training or validation data
               callbacks: list of keras callbacks
+              verbose: whether to print verbose output
         """
         self.parent_comm = parent_comm 
         self.parent_rank = parent_rank
@@ -56,6 +59,7 @@ class MPIProcess(object):
         self.stop_training = False
         self.time_step = 0
         self.callbacks_list = callbacks
+        self.verbose = verbose
 
         if self.parent_rank is not None:
             self.bcast_model_info( self.parent_comm )
@@ -354,7 +358,8 @@ class MPIProcess(object):
 class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
-    def __init__(self, data, parent_comm, parent_rank=None, num_epochs=1, callbacks=[]):
+    def __init__(self, data, parent_comm, parent_rank=None, num_epochs=1, 
+            callbacks=[], verbose=False):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
         if parent_rank is None:
@@ -362,7 +367,7 @@ class MPIWorker(MPIProcess):
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
         print info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size())
         super(MPIWorker, self).__init__( parent_comm, parent_rank, 
-                num_epochs=num_epochs, data=data, callbacks=callbacks )
+                num_epochs=num_epochs, data=data, callbacks=callbacks, verbose=verbose )
 
     def train(self):
         """Compile the model, then wait for the signal to train. Then train for num_epochs epochs.
@@ -401,8 +406,9 @@ class MPIWorker(MPIProcess):
     def train_on_batch(self, batch):
         """Train on a single batch"""
         train_loss = self.model.train_on_batch( batch[0], batch[1] )
-        print "Worker %d metrics:"%self.rank,
-        self.print_metrics(train_loss)
+        if self.verbose:
+            print "Worker %d metrics:"%self.rank,
+            self.print_metrics(train_loss)
         return self.get_logs(train_loss)
 
     def compute_update(self):
@@ -431,7 +437,7 @@ class MPIMaster(MPIProcess):
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, num_epochs=1, data=None,
-            num_sync_workers=1, callbacks=[]):
+            num_sync_workers=1, callbacks=[], verbose=False):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -446,11 +452,12 @@ class MPIMaster(MPIProcess):
         self.num_sync_workers = num_sync_workers
         info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
                 "(Communicator size {2}, Child communicator size {3})")
-        print "Will wait for updates from %d workers before synchronizing" % self.num_sync_workers
         print info.format(parent_comm.Get_rank(),parent_rank,parent_comm.Get_size(), 
                 child_comm.Get_size())
+        if self.num_sync_workers > 1:
+            print "Will wait for updates from %d workers before synchronizing" % self.num_sync_workers
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, 
-                num_epochs=num_epochs, callbacks=callbacks )
+                num_epochs=num_epochs, callbacks=callbacks, verbose=verbose )
 
     def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""
@@ -594,8 +601,9 @@ class MPIMaster(MPIProcess):
             for i in range(len(val_metrics)):
                 val_metrics[i] += new_val_metrics[i]
         val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
-        print "Validation metrics:",
-        self.print_metrics(val_metrics)
+        if self.verbose:
+            print "Validation metrics:",
+            self.print_metrics(val_metrics)
         return self.get_logs(val_metrics, val=True)
 
     def apply_update(self):
