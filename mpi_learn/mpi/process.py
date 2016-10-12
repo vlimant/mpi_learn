@@ -385,9 +385,13 @@ class MPIWorker(MPIProcess):
         for epoch in range(self.num_epochs):
             print "MPIWorker %d beginning epoch %d" % (self.rank, epoch)
             self.callbacks.on_epoch_begin(epoch)
+            epoch_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
             for i_batch, batch in enumerate(self.data.generate_data()):
                 self.callbacks.on_batch_begin(i_batch)
-                batch_logs = self.train_on_batch(batch)
+                train_metrics = self.train_on_batch(batch)
+                batch_logs = self.get_logs(train_metrics)
+                for i in range(len(train_metrics)):
+                    epoch_metrics[i] += train_metrics[i]
                 self.compute_update()
                 self.do_send_sequence()
                 self.callbacks.on_batch_end(i_batch, batch_logs)
@@ -397,7 +401,10 @@ class MPIWorker(MPIProcess):
                     break
             if self.stop_training:
                 break
-            self.callbacks.on_epoch_end(epoch, batch_logs) # send logs from the last batch
+            epoch_metrics = [ m * 1.0 / (i_batch+1) for m in epoch_metrics ]
+            print "Worker %d average metrics:"%self.rank,
+            self.print_metrics(epoch_metrics)
+            self.callbacks.on_epoch_end(epoch, self.get_logs(epoch_metrics)) 
         print "MPIWorker %d signing off" % self.rank
         self.send_exit_to_parent()
         self.callbacks.on_train_end()
@@ -409,7 +416,7 @@ class MPIWorker(MPIProcess):
         if self.verbose:
             print "Worker %d metrics:"%self.rank,
             self.print_metrics(train_loss)
-        return self.get_logs(train_loss)
+        return train_loss
 
     def compute_update(self):
         """Compute the update from the new and old sets of model weights"""
@@ -601,9 +608,8 @@ class MPIMaster(MPIProcess):
             for i in range(len(val_metrics)):
                 val_metrics[i] += new_val_metrics[i]
         val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
-        if self.verbose:
-            print "Validation metrics:",
-            self.print_metrics(val_metrics)
+        print "Validation metrics:",
+        self.print_metrics(val_metrics)
         return self.get_logs(val_metrics, val=True)
 
     def apply_update(self):

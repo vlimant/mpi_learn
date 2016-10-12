@@ -40,6 +40,8 @@ if __name__ == '__main__':
     parser.add_argument('--masters', help='number of master processes', default=1, type=int)
     parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
             type=int, default=-1)
+    parser.add_argument('--master-gpu',help='master process should get a gpu',
+            action='store_true', dest='master_gpu')
     parser.add_argument('--synchronous',help='run in synchronous mode',action='store_true')
 
     # configuration of training process
@@ -67,7 +69,8 @@ if __name__ == '__main__':
 
     comm = MPI.COMM_WORLD.Dup()
     # We have to assign GPUs to processes before importing Theano.
-    device = get_device( comm, args.masters, gpu_limit=args.max_gpus )
+    device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
+            gpu_for_master=args.master_gpu)
     print "Process",comm.Get_rank(),"using device",device
     os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device)
     # GPU ops need to be executed synchronously in order for profiling to make sense

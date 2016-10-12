@@ -56,7 +56,11 @@ class Data(object):
 
     def count_data(self):
         """Counts the number of data points across all files"""
-        return sum( self.batch_size for i in self.generate_data() )
+        num_data = 0
+        for cur_file_name in self.file_names:
+            cur_file_features, cur_file_labels = self.load_data(cur_file_name)
+            num_data += self.get_num_samples( cur_file_features )
+        return num_data
 
     def is_numpy_array(self, data):
         return isinstance( data, np.ndarray )
@@ -82,9 +86,9 @@ class Data(object):
         """Input: dataset consisting of a numpy array or list of numpy arrays.
             Output: number of samples in the dataset"""
         if self.is_numpy_array(data):
-            return data.shape[0]
+            return len(data)
         else:
-            return data[0].shape[0]
+            return len(data[0])
 
     def load_data(self, in_file):
         """Input: name of file from which the data should be loaded
@@ -127,3 +131,18 @@ class H5Data(Data):
         else:
             out = data[:]
         return out
+
+    def count_data(self):
+        """This is faster than using the parent count_data
+            because the datasets do not have to be loaded
+            as numpy arrays"""
+        num_data = 0
+        for in_file_name in self.file_names:
+            h5_file = h5py.File( in_file_name, 'r' )
+            X = h5_file[self.features_name]
+            if hasattr(X, 'keys'):
+                num_data += len(X[ X.keys()[0] ])
+            else:
+                num_data += len(X)
+            h5_file.close()
+        return num_data
