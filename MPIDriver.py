@@ -17,6 +17,7 @@ from mpi_learn.utils import import_keras, load_model
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose',help='display metrics for each training batch',action='store_true')
+    parser.add_argument('--profile',help='profile theano code',action='store_true')
 
     # model arguments
     parser.add_argument('model_name', help=('will load model architecture from '
@@ -68,7 +69,10 @@ if __name__ == '__main__':
     # We have to assign GPUs to processes before importing Theano.
     device = get_device( comm, args.masters, gpu_limit=args.max_gpus )
     print "Process",comm.Get_rank(),"using device",device
-    os.environ['THEANO_FLAGS'] = "device=%s,floatX=float32" % (device)
+    os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device)
+    # GPU ops need to be executed synchronously in order for profiling to make sense
+    if args.profile:
+        os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
     import_keras()
     import keras.callbacks as cbks
 
