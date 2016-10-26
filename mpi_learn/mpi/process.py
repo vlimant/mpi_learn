@@ -206,7 +206,6 @@ class MPIProcess(object):
             if self.parent_rank is None:
                 raise Error("Attempting to receive %s from parent, but parent rank is None" % tag)
             source = self.parent_rank 
-        print self.rank,"receiving",tag,"from",source
         tag_num = self.lookup_mpi_tag(tag)
         if buffer:
             comm.Recv( obj, source=source, tag=tag_num, status=status )
@@ -229,7 +228,6 @@ class MPIProcess(object):
             if self.parent_rank is None:
                 raise Error("Attempting to send %s to parent, but parent rank is None" % tag)
             dest = self.parent_rank
-        print self.rank,"sending",tag,"to",dest
         tag_num = self.lookup_mpi_tag(tag)
         if buffer:
             comm.Send( obj, dest=dest, tag=tag_num )
