@@ -33,7 +33,7 @@ class VanillaSGD(Optimizer):
 
 
 class RunningAverageOptimizer(Optimizer):
-    """Base class for AdaDelta and RMSProp optimizers.
+    """Base class for AdaDelta, Adam, and RMSProp optimizers.
         rho (tunable parameter): decay constant used to compute running parameter averages
         epsilon (tunable parameter): small constant used to prevent division by zero
         running_g2: running average of the squared gradient, where squaring is done componentwise"""
@@ -68,6 +68,59 @@ class RunningAverageOptimizer(Optimizer):
             value: numpy array containing the running average of squares"""
         return np.sqrt( np.add(value, self.epsilon) )
 
+
+class Adam(RunningAverageOptimizer):
+    """Adam optimizer.
+        Note that the beta_2 parameter is stored internally as 'rho' 
+        and "v" in the algorithm is called "running_g2"
+        for consistency with the other running-average optimizers
+        Attributes:
+          learning_rate: base learning rate
+          beta_1: decay rate for the first moment estimate
+          m: running average of the first moment of the gradient
+          t: time step
+        """
+
+    def __init__(self, learning_rate=0.001, beta_1=0.9, beta_2=0.999,
+            epsilon=1e-8):
+        super(Adam, self).__init__(rho=beta_2, epsilon=epsilon)
+        self.learning_rate = learning_rate
+        self.beta_1 = beta_1
+        self.t = 0
+        self.m = None
+
+    def running_average_np(self, previous, update):
+        """Computes and returns the running average of a numpy array.
+            Parameters are the same as those for running_average_square_np"""
+        new_contribution = (1-self.beta_1) * update
+        old_contribution = self.beta_1 * previous
+        return new_contribution + old_contribution
+
+    def running_average(self, previous, update):
+        """Returns the running average of the square of a quantity.
+            Parameters are the same as those for running_average_square_np"""
+        result = []
+        for prev, up in zip(previous, update):
+            result.append( self.running_average_np( prev, up ) )
+        return result
+
+    def apply_update(self, weights, gradient):
+        """Update the running averages of the first and second moments
+            of the gradient, and compute the update for this time step"""
+        if self.running_g2 is None:
+            self.running_g2 = [ np.zeros_like(g) for g in gradient ]
+        if self.m is None:
+            self.m = [ np.zeros_like(g) for g in gradient ]
+
+        self.t += 1
+        self.m = self.running_average( self.m, gradient )
+        self.running_g2 = self.running_average_square( self.running_g2, gradient )
+        alpha_t = self.learning_rate * (1 - self.rho**self.t)**(0.5) / (1 - self.beta_1**self.t)
+        new_weights = []
+        for w, g, g2 in zip(weights, self.m, self.running_g2):
+            update = alpha_t * g / ( np.sqrt(g2) + self.epsilon )
+            new_weights.append( w - update )
+        return new_weights
 
 class AdaDelta(RunningAverageOptimizer):
     """ADADELTA adaptive learning rate method.
@@ -124,5 +177,6 @@ def get_optimizer(name):
             'sgd':      VanillaSGD,
             'adadelta': AdaDelta,
             'rmsprop':  RMSProp,
+            'adam':     Adam,
             }
     return lookup[name]

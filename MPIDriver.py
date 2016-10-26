@@ -46,7 +46,7 @@ if __name__ == '__main__':
 
     # configuration of training process
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
-    parser.add_argument('--optimizer',help='optimizer for master to use',default='rmsprop')
+    parser.add_argument('--optimizer',help='optimizer for master to use',default='adam')
     parser.add_argument('--loss',help='loss function',default='binary_crossentropy')
     parser.add_argument('--worker-optimizer',help='optimizer for workers to use',
             dest='worker_optimizer', default='sgd')
