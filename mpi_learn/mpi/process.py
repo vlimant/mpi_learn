@@ -150,15 +150,9 @@ class MPIProcess(object):
             -Send the update (if the parent accepts it)
             -Sync time and model weights with parent"""
         self.send_update(check_permission=True)
-        self.sync_with_master()
-
-    def sync_with_master(self):
-        will_sync = self.algo.should_sync()
-        self.send_bool( will_sync )
-        if will_sync:
-            self.time_step = self.recv_time_step()
-            self.recv_weights()
-            self.algo.set_worker_model_weights( self.model, self.weights )
+        self.time_step = self.recv_time_step()
+        self.recv_weights()
+        self.algo.set_worker_model_weights( self.model, self.weights )
 
     ### MPI-related functions below ###
 
@@ -212,6 +206,7 @@ class MPIProcess(object):
             if self.parent_rank is None:
                 raise Error("Attempting to receive %s from parent, but parent rank is None" % tag)
             source = self.parent_rank 
+        print self.rank,"receiving",tag,"from",source
         tag_num = self.lookup_mpi_tag(tag)
         if buffer:
             comm.Recv( obj, source=source, tag=tag_num, status=status )
@@ -234,6 +229,7 @@ class MPIProcess(object):
             if self.parent_rank is None:
                 raise Error("Attempting to send %s to parent, but parent rank is None" % tag)
             dest = self.parent_rank
+        print self.rank,"sending",tag,"to",dest
         tag_num = self.lookup_mpi_tag(tag)
         if buffer:
             comm.Send( obj, dest=dest, tag=tag_num )
@@ -392,8 +388,9 @@ class MPIWorker(MPIProcess):
                 batch_logs = self.get_logs(train_metrics)
                 for i in range(len(train_metrics)):
                     epoch_metrics[i] += train_metrics[i]
-                self.compute_update()
-                self.do_send_sequence()
+                if self.algo.should_sync():
+                    self.compute_update()
+                    self.do_send_sequence()
                 self.callbacks.on_batch_end(i_batch, batch_logs)
                 if exit_request.Test():
                     self.stop_training = True
@@ -485,10 +482,8 @@ class MPIMaster(MPIProcess):
             self.sync_child(child)
 
     def sync_child(self, child):
-        will_sync = self.recv_bool( source=child, comm=self.child_comm )
-        if will_sync:
-            self.send_time_step( dest=child, comm=self.child_comm )
-            self.send_weights( dest=child, comm=self.child_comm )
+        self.send_time_step( dest=child, comm=self.child_comm )
+        self.send_weights( dest=child, comm=self.child_comm )
 
     def sync_parent(self):
         if self.has_parent:
