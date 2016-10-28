@@ -50,8 +50,11 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     else:
         worker_id = -1
 
+    # get_num_gpus will fail if CUDA is not installed, so we short circuit if 0 GPUs are requested
+    if gpu_limit == 0:
+        return 'cpu'
     max_gpu = get_num_gpus() - 1
-    if gpu_limit >= 0:
+    if gpu_limit > 0:
         max_gpu = min( max_gpu, gpu_limit-1 )
     if worker_id < 0 or worker_id > max_gpu:
         return 'cpu'

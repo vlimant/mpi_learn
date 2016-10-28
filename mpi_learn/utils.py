@@ -15,9 +15,11 @@ def shapes_from_weights(weights):
 
 def get_num_gpus():
     """Returns the number of GPUs available"""
+    print "Determining number of GPUs...",
     from pycuda import driver 
     driver.init()
     num_gpus = driver.Device.count()
+    print num_gpus
     return num_gpus
 
 def import_keras(tries=10):
