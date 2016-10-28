@@ -158,7 +158,7 @@ class MPIProcess(object):
 
     # This dict associates message strings with integers to be passed as MPI tags.
     tag_lookup = {
-            'any':          MPI.ANY_SOURCE,
+            'any':          MPI.ANY_TAG,
             'train':          0,
             'exit':           1,
             'begin_weights':  2,
