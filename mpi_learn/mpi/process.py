@@ -380,6 +380,7 @@ class MPIWorker(MPIProcess):
             print "MPIWorker %d beginning epoch %d" % (self.rank, epoch)
             self.callbacks.on_epoch_begin(epoch)
             epoch_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
+            i_batch = 0
             for i_batch, batch in enumerate(self.data.generate_data()):
                 self.callbacks.on_batch_begin(i_batch)
                 train_metrics = self.train_on_batch(batch)
@@ -596,6 +597,7 @@ class MPIMaster(MPIProcess):
         self.model.set_weights(self.weights)
 
         val_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
+        i_batch = 0
         for i_batch, batch in enumerate(self.data.generate_data()):
             new_val_metrics = self.model.test_on_batch(*batch)
             for i in range(len(val_metrics)):
