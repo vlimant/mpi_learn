@@ -91,7 +91,7 @@ class MPIManager(object):
     """
 
     def __init__(self, comm, data, num_epochs, train_list, val_list, num_masters=1,
-            synchronous=False, callbacks=[], verbose=False):
+            synchronous=False, callbacks=[], verbose=False, custom_objects={}):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -123,6 +123,7 @@ class MPIManager(object):
         self.comm_masters = None
         self.is_master = None
         self.should_validate = None
+        self.custom_objects=custom_objects
 
         self.make_comms(comm)
 
@@ -164,12 +165,12 @@ class MPIManager(object):
             self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
                     data=self.data, child_comm=child_comm, num_epochs=self.num_epochs,
                     num_sync_workers=num_sync_workers, callbacks=self.callbacks,
-                    verbose=self.verbose)
+                    verbose=self.verbose, custom_objects=self.custom_objects)
         else:
             self.set_train_data()
             self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=parent_rank, 
                     num_epochs=self.num_epochs, data=self.data, callbacks=self.callbacks,
-                    verbose=self.verbose)
+                    verbose=self.verbose,custom_objects=self.custom_objects)
 
     def get_num_sync_workers(self, comm):
         """Returns the number of workers the master should wait for
