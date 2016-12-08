@@ -18,6 +18,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose',help='display metrics for each training batch',action='store_true')
     parser.add_argument('--profile',help='profile theano code',action='store_true')
+    parser.add_argument('--tf', help='use tensorflow backend', action='store_true')
 
     # model arguments
     parser.add_argument('model_name', help=('will load model architecture from '
@@ -68,14 +69,21 @@ if __name__ == '__main__':
         val_list = [ s.strip() for s in val_list_file.readlines() ]
 
     comm = MPI.COMM_WORLD.Dup()
-    # We have to assign GPUs to processes before importing Theano.
-    device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
-            gpu_for_master=args.master_gpu)
-    print "Process",comm.Get_rank(),"using device",device
-    os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device)
-    # GPU ops need to be executed synchronously in order for profiling to make sense
-    if args.profile:
-        os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+
+    # Theano is the default backend; use tensorflow if --tf is specified.
+    # In the theano case it is necessary to specify the device before importing.
+    if args.tf: 
+        backend = 'tensorflow'
+    else:
+        backend = 'theano'
+        device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
+                gpu_for_master=args.master_gpu)
+        print "Process",comm.Get_rank(),"using device",device
+        os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device)
+        # GPU ops need to be executed synchronously in order for profiling to make sense
+        if args.profile:
+            os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+    os.environ['KERAS_BACKEND'] = backend
     import_keras()
     import keras.callbacks as cbks
 
