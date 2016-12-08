@@ -31,8 +31,8 @@ class MPIProcess(object):
            stop_training: becomes true when it is time to stop training
     """
 
-    def __init__(self, parent_comm, parent_rank=None, num_epochs=1, data=None, callbacks=[],
-            verbose=False,custom_objects={}):
+    def __init__(self, parent_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
+            callbacks=[], verbose=False, custom_objects={}):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, model information should be set manually
             with set_model_info() and training should be launched with train().
@@ -42,6 +42,7 @@ class MPIProcess(object):
               parent_rank (integer): rank of this node's parent in parent_comm
               num_epochs: number of training epochs
               data: Data object used to generate training or validation data
+              algo: Algo object used to configure the training process
               callbacks: list of keras callbacks
               verbose: whether to print verbose output
         """
@@ -50,9 +51,9 @@ class MPIProcess(object):
         self.rank = parent_comm.Get_rank()
         self.num_epochs = num_epochs
         self.data = data
+        self.algo = algo
         self.model = None
         self.model_arch = None
-        self.algo = None
         self.weights_shapes = None
         self.weights = None
         self.update = None
@@ -71,15 +72,13 @@ class MPIProcess(object):
                         "Please initialize manually")
             print warning.format(self.rank)
 
-    def set_model_info(self, model_arch=None, algo=None, weights=None):
-        """Sets NN architecture, training algorithm, and weights.
+    def set_model_info(self, model_arch=None, weights=None):
+        """Sets NN architecture and weights.
             Any parameter not provided is skipped."""
         if model_arch is not None:
             self.model_arch = model_arch
             from keras.models import model_from_json
             self.model = model_from_json( self.model_arch, custom_objects=self.custom_objects )
-        if algo is not None:
-            self.algo = algo
         if weights is not None:
             self.weights = weights
             self.weights_shapes = shapes_from_weights( self.weights )
@@ -88,7 +87,7 @@ class MPIProcess(object):
 
     def check_sanity(self):
         """Throws an exception if any model attribute has not been set yet."""
-        for par in ['model','model_arch','algo','weights_shapes','weights']:
+        for par in ['model','model_arch','weights_shapes','weights']:
             if not hasattr(self, par) or getattr(self, par) is None:
                 raise Error("%s not found!  Process %d does not seem to be set up correctly." % (par,self.rank))
 
@@ -168,10 +167,9 @@ class MPIProcess(object):
             'bool':           5,
             'history':        6,
             'model_arch':     10,
-            'algo':           11,
-            'weights_shapes': 12,
-            'weights':        13,
-            'update':         13,
+            'weights_shapes': 11,
+            'weights':        12,
+            'update':         12,
             }
     # This dict is for reverse tag lookups.
     inv_tag_lookup = { value:key for key,value in tag_lookup.iteritems() }
@@ -341,9 +339,9 @@ class MPIProcess(object):
             self.bcast( w, comm=comm, root=root, buffer=True )
 
     def bcast_model_info(self, comm, root=0):
-        """Broadcast model architecture, optimization algorithm, and weights shape
+        """Broadcast model architecture and weights shape
             using communicator comm and the indicated root rank"""
-        for tag in ['model_arch','algo','weights_shapes']:
+        for tag in ['model_arch','weights_shapes']:
             setattr( self, tag, self.bcast( getattr(self, tag), comm=comm, root=root ) )
         if self.weights is None:
             self.weights = weights_from_shapes( self.weights_shapes )
@@ -353,7 +351,7 @@ class MPIProcess(object):
 class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
-    def __init__(self, data, parent_comm, parent_rank=None, num_epochs=1, 
+    def __init__(self, data, algo, parent_comm, parent_rank=None, num_epochs=1, 
             callbacks=[], verbose=False, custom_objects={}):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
@@ -362,7 +360,8 @@ class MPIWorker(MPIProcess):
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
         print info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size())
         super(MPIWorker, self).__init__( parent_comm, parent_rank, 
-                num_epochs=num_epochs, data=data, callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
+                num_epochs=num_epochs, data=data, algo=algo,
+                callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
 
     def train(self):
         """Compile the model, then wait for the signal to train. Then train for num_epochs epochs.
@@ -441,7 +440,7 @@ class MPIMaster(MPIProcess):
     """
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, num_epochs=1, data=None,
-            num_sync_workers=1, callbacks=[], verbose=False, custom_objects={}):
+            algo=None, num_sync_workers=1, callbacks=[], verbose=False, custom_objects={}):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -461,7 +460,8 @@ class MPIMaster(MPIProcess):
         if self.num_sync_workers > 1:
             print "Will wait for updates from %d workers before synchronizing" % self.num_sync_workers
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, 
-                num_epochs=num_epochs, callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
+                algo=algo, num_epochs=num_epochs, callbacks=callbacks, 
+                verbose=verbose, custom_objects=custom_objects )
 
     def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""

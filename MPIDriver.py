@@ -83,38 +83,41 @@ if __name__ == '__main__':
     # so that we can use it to count the number of training examples
     data = H5Data( train_list, batch_size=args.batch, 
             features_name=args.features_name, labels_name=args.labels_name )
-    if comm.Get_rank() == 0:
-        validate_every = data.count_data()/args.batch 
+    validate_every = data.count_data()/args.batch 
+
+    # Some input arguments may be ignored depending on chosen algorithm
+    if args.easgd:
+        algo = Algo(None, loss=args.loss, validate_every=validate_every,
+                mode='easgd', sync_every=args.sync_every,
+                worker_optimizer=args.worker_optimizer,
+                elastic_force=args.elastic_force/(comm.Get_size()-1),
+                elastic_lr=args.elastic_lr, 
+                elastic_momentum=args.elastic_momentum) 
+    else:
+        algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
+                sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
+
+    # Most Keras callbacks are supported
     callbacks = []
     callbacks.append( cbks.ModelCheckpoint( '_'.join([
         model_name,args.trial_name,"mpi_learn_result.h5"]), 
         monitor='val_loss', verbose=1 ) )
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
-    manager = MPIManager( comm=comm, data=data, num_epochs=args.epochs, 
+    manager = MPIManager( comm=comm, data=data, algo=algo, num_epochs=args.epochs, 
             train_list=train_list, val_list=val_list, num_masters=args.masters,
             synchronous=args.synchronous, callbacks=callbacks, verbose=args.verbose )
 
     # Process 0 defines the model and propagates it to the workers.
     if comm.Get_rank() == 0:
+        print algo
         weights_file = None
         if args.load_weights:
             weights_file = model_name+"_weights.h5"
         model = load_model(model_name+"_arch.json", weights_file=weights_file)
         model_arch = model.to_json()
-        if args.easgd:
-            algo = Algo(None, loss=args.loss, validate_every=validate_every,
-                    mode='easgd', sync_every=args.sync_every,
-                    worker_optimizer=args.worker_optimizer,
-                    elastic_force=args.elastic_force/(comm.Get_size()-1),
-                    elastic_lr=args.elastic_lr, 
-                    elastic_momentum=args.elastic_momentum) 
-        else:
-            algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
-                    sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
-        print algo
         weights = model.get_weights()
-        manager.process.set_model_info( model_arch, algo, weights )
+        manager.process.set_model_info( model_arch, weights )
 
         t_0 = time()
         histories = manager.process.train() 
