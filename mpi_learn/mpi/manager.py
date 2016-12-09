@@ -73,6 +73,7 @@ class MPIManager(object):
           process: the MPI worker or master object running on this process
           data: Data object containing information used for training/validation
           algo: Algo object containing training algorithm configuration options
+          model_builder: ModelBuilder object
           num_masters: integer indicating the number of master processes.  
             If num_masters > 1, an additional master will be created to supervise all masters.
           num_workers: integer indicating the number of worker processes
@@ -91,8 +92,8 @@ class MPIManager(object):
           verbose: whether to make MPIProcess objects verbose
     """
 
-    def __init__(self, comm, data, algo, num_epochs, train_list, val_list, 
-            num_masters=1, synchronous=False, callbacks=[], 
+    def __init__(self, comm, data, algo, model_builder, num_epochs, train_list, 
+            val_list, num_masters=1, synchronous=False, callbacks=[], 
             verbose=False, custom_objects={}):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
@@ -101,6 +102,7 @@ class MPIManager(object):
             comm: MPI intracommunicator containing all processes
             data: Data object containing information used for training/validation
             algo: Algo object containing training algorithm configuration options
+            model_builder: ModelBuilder object
             num_masters: number of master processes
             num_epochs: number of times to iterate over the training data
             train_list: list of training data files
@@ -111,6 +113,7 @@ class MPIManager(object):
         """
         self.data = data
         self.algo = algo
+        self.model_builder = model_builder
         self.num_masters = num_masters
         self.num_workers = comm.Get_size() - self.num_masters 
         if self.num_masters > 1:
@@ -167,15 +170,15 @@ class MPIManager(object):
             self.set_val_data()
             num_sync_workers = self.get_num_sync_workers(child_comm)
             self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
-                    data=self.data, algo=self.algo, child_comm=child_comm, 
-                    num_epochs=self.num_epochs, num_sync_workers=num_sync_workers, 
-                    callbacks=self.callbacks, verbose=self.verbose, 
-                    custom_objects=self.custom_objects)
+                    data=self.data, algo=self.algo, model_builder=self.model_builder, 
+                    child_comm=child_comm, num_epochs=self.num_epochs, 
+                    num_sync_workers=num_sync_workers, callbacks=self.callbacks, 
+                    verbose=self.verbose, custom_objects=self.custom_objects)
         else:
             self.set_train_data()
             self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=parent_rank, 
                     num_epochs=self.num_epochs, data=self.data, algo=self.algo, 
-                    callbacks=self.callbacks, verbose=self.verbose,
+                    model_builder=self.model_builder, callbacks=self.callbacks, verbose=self.verbose,
                     custom_objects=self.custom_objects)
 
     def get_num_sync_workers(self, comm):

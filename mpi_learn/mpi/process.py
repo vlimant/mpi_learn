@@ -17,7 +17,7 @@ class MPIProcess(object):
            parent_rank (integer): rank of this node's parent in parent_comm
            rank (integer): rank of this node in parent_comm
            model: Keras model to train
-           model_arch: json string giving model architecture information
+           model_builder: ModelBuilder object specifying model
            algo: Algo object defining how to optimize model weights
            weights_shapes: list of tuples indicating the shape of each layer of the model
            weights: list of numpy arrays storing the last weights received from the parent
@@ -32,10 +32,9 @@ class MPIProcess(object):
     """
 
     def __init__(self, parent_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
-            callbacks=[], verbose=False, custom_objects={}):
+            model_builder=None, callbacks=[], verbose=False, custom_objects={}):
         """If the rank of the parent is given, initialize this process and immediately start 
-            training. If no parent is indicated, model information should be set manually
-            with set_model_info() and training should be launched with train().
+            training. If no parent is indicated, training should be launched with train().
             
             Parameters:
               parent_comm: MPI intracommunicator used to communicate with parent
@@ -43,51 +42,41 @@ class MPIProcess(object):
               num_epochs: number of training epochs
               data: Data object used to generate training or validation data
               algo: Algo object used to configure the training process
+              model_builder: ModelBuilder object specifying model
               callbacks: list of keras callbacks
               verbose: whether to print verbose output
         """
         self.parent_comm = parent_comm 
         self.parent_rank = parent_rank
-        self.rank = parent_comm.Get_rank()
         self.num_epochs = num_epochs
         self.data = data
         self.algo = algo
-        self.model = None
-        self.model_arch = None
-        self.weights_shapes = None
-        self.weights = None
-        self.update = None
-        self.stop_training = False
-        self.time_step = 0
+        self.model_builder = model_builder
         self.callbacks_list = callbacks
         self.verbose = verbose
         self.custom_objects = custom_objects
 
-        if self.parent_rank is not None:
-            self.bcast_model_info( self.parent_comm )
-            self.set_model_info( model_arch=self.model_arch, weights=self.weights )
-            self.train()
-        else:
-            warning = ("MPIProcess {0} created with no parent rank. "
-                        "Please initialize manually")
-            print warning.format(self.rank)
+        self.update = None
+        self.stop_training = False
+        self.time_step = 0
 
-    def set_model_info(self, model_arch=None, weights=None):
-        """Sets NN architecture and weights.
-            Any parameter not provided is skipped."""
-        if model_arch is not None:
-            self.model_arch = model_arch
-            from keras.models import model_from_json
-            self.model = model_from_json( self.model_arch, custom_objects=self.custom_objects )
-        if weights is not None:
-            self.weights = weights
-            self.weights_shapes = shapes_from_weights( self.weights )
-            self.model.set_weights(self.weights)
-            self.update = weights_from_shapes( self.weights_shapes )
+        self.rank = parent_comm.Get_rank()
+        self.build_model()
+        if self.parent_rank is not None:
+            self.bcast_weights( self.parent_comm )
+            self.train()
+
+    def build_model(self):
+        """Builds the Keras model and updates model-related attributes"""
+        self.model = self.model_builder.build_model()
+        self.compile_model()
+        self.weights = self.model.get_weights()
+        self.weights_shapes = shapes_from_weights( self.weights )
+        self.update = weights_from_shapes( self.weights_shapes )
 
     def check_sanity(self):
         """Throws an exception if any model attribute has not been set yet."""
-        for par in ['model','model_arch','weights_shapes','weights']:
+        for par in ['model','weights_shapes','weights','update']:
             if not hasattr(self, par) or getattr(self, par) is None:
                 raise Error("%s not found!  Process %d does not seem to be set up correctly." % (par,self.rank))
 
@@ -166,8 +155,6 @@ class MPIProcess(object):
             'time':           4,
             'bool':           5,
             'history':        6,
-            'model_arch':     10,
-            'weights_shapes': 11,
             'weights':        12,
             'update':         12,
             }
@@ -334,25 +321,21 @@ class MPIProcess(object):
         return self.parent_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
 
     def bcast_weights(self, comm, root=0):
-        """Broadcast weights layer by layer on communicator comm from the indicated root rank"""
-        for w in self.weights:
-            self.bcast( w, comm=comm, root=root, buffer=True )
-
-    def bcast_model_info(self, comm, root=0):
-        """Broadcast model architecture and weights shape
-            using communicator comm and the indicated root rank"""
-        for tag in ['model_arch','weights_shapes']:
-            setattr( self, tag, self.bcast( getattr(self, tag), comm=comm, root=root ) )
+        """Broadcast weights shape and weights (layer by layer) 
+            on communicator comm from the indicated root rank"""
+        self.weights_shapes = self.bcast( 
+                self.weights_shapes, comm=comm, root=root )
         if self.weights is None:
             self.weights = weights_from_shapes( self.weights_shapes )
-        self.bcast_weights( comm, root )
+        for w in self.weights:
+            self.bcast( w, comm=comm, root=root, buffer=True )
 
 
 class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
-    def __init__(self, data, algo, parent_comm, parent_rank=None, num_epochs=1, 
-            callbacks=[], verbose=False, custom_objects={}):
+    def __init__(self, data, algo, model_builder, parent_comm, parent_rank=None, 
+            num_epochs=1, callbacks=[], verbose=False, custom_objects={}):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
         if parent_rank is None:
@@ -360,16 +343,15 @@ class MPIWorker(MPIProcess):
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
         print info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size())
         super(MPIWorker, self).__init__( parent_comm, parent_rank, 
-                num_epochs=num_epochs, data=data, algo=algo,
+                num_epochs=num_epochs, data=data, algo=algo, model_builder=model_builder,
                 callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
 
     def train(self):
-        """Compile the model, then wait for the signal to train. Then train for num_epochs epochs.
+        """Wait for the signal to train. Then train for num_epochs epochs.
             In each step, train on one batch of input data, then send the update to the master
             and wait to receive a new set of weights.  When done, send 'exit' signal to parent.
         """
         self.check_sanity()
-        self.compile_model()
         self.init_callbacks(for_worker=True)
         self.callbacks.on_train_begin()
         self.await_signal_from_parent()
@@ -439,8 +421,9 @@ class MPIMaster(MPIProcess):
           epoch: current epoch number
     """
 
-    def __init__(self, parent_comm, parent_rank=None, child_comm=None, num_epochs=1, data=None,
-            algo=None, num_sync_workers=1, callbacks=[], verbose=False, custom_objects={}):
+    def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
+            num_epochs=1, data=None, algo=None, model_builder=None, 
+            num_sync_workers=1, callbacks=[], verbose=False, custom_objects={}):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -460,8 +443,8 @@ class MPIMaster(MPIProcess):
         if self.num_sync_workers > 1:
             print "Will wait for updates from %d workers before synchronizing" % self.num_sync_workers
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, 
-                algo=algo, num_epochs=num_epochs, callbacks=callbacks, 
-                verbose=verbose, custom_objects=custom_objects )
+                algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
+                callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
 
     def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""
@@ -559,8 +542,7 @@ class MPIMaster(MPIProcess):
             When finished, signal the parent process that training is complete.
         """
         self.check_sanity()
-        self.bcast_model_info( comm=self.child_comm )
-        self.compile_model()
+        self.bcast_weights( comm=self.child_comm )
         self.init_callbacks(for_worker=self.has_parent)
         self.callbacks.on_train_begin()
         self.signal_children()

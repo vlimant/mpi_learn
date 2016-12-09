@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-### This script creates a Keras model and a Manager object that handles distributed training.
+### This script creates an MPIManager object and launches distributed training.
 
 import sys,os
 import numpy as np
@@ -12,7 +12,8 @@ from time import time,sleep
 from mpi_learn.mpi.manager import MPIManager, get_device
 from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
-from mpi_learn.utils import import_keras, load_model
+from mpi_learn.train.model import ModelFromJson
+from mpi_learn.utils import import_keras
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -21,10 +22,7 @@ if __name__ == '__main__':
     parser.add_argument('--tf', help='use tensorflow backend', action='store_true')
 
     # model arguments
-    parser.add_argument('model_name', help=('will load model architecture from '
-                                            '<model_name>_arch.json'))
-    parser.add_argument('--load-weights',help='load weights from <model_name>_weights.h5',
-            action='store_true')
+    parser.add_argument('model_json', help='JSON file containing model architecture')
     parser.add_argument('--trial-name', help='descriptive name for trial', 
             default='train', dest='trial_name')
 
@@ -61,7 +59,7 @@ if __name__ == '__main__':
             type=float, default=0, dest='elastic_momentum')
 
     args = parser.parse_args()
-    model_name = args.model_name
+    model_name = os.path.basename(args.model_json).replace('.json','')
 
     with open(args.train_data) as train_list_file:
         train_list = [ s.strip() for s in train_list_file.readlines() ]
@@ -105,6 +103,8 @@ if __name__ == '__main__':
         algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
 
+    model_builder = ModelFromJson( comm, args.model_json )
+
     # Most Keras callbacks are supported
     callbacks = []
     callbacks.append( cbks.ModelCheckpoint( '_'.join([
@@ -112,20 +112,14 @@ if __name__ == '__main__':
         monitor='val_loss', verbose=1 ) )
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
-    manager = MPIManager( comm=comm, data=data, algo=algo, num_epochs=args.epochs, 
-            train_list=train_list, val_list=val_list, num_masters=args.masters,
-            synchronous=args.synchronous, callbacks=callbacks, verbose=args.verbose )
+    manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
+            num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
+            num_masters=args.masters, synchronous=args.synchronous, 
+            callbacks=callbacks, verbose=args.verbose )
 
-    # Process 0 defines the model and propagates it to the workers.
+    # Process 0 launches the training procedure
     if comm.Get_rank() == 0:
         print algo
-        weights_file = None
-        if args.load_weights:
-            weights_file = model_name+"_weights.h5"
-        model = load_model(model_name+"_arch.json", weights_file=weights_file)
-        model_arch = model.to_json()
-        weights = model.get_weights()
-        manager.process.set_model_info( model_arch, weights )
 
         t_0 = time()
         histories = manager.process.train() 

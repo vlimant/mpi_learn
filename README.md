@@ -7,7 +7,7 @@ Test with the MNIST dataset:
 ```
 python BuildModel.py mnist
 python models/get_mnist.py
-mpirun -np 3 ./MPIDriver.py mnist train_mnist.list test_mnist.list --loss categorical_crossentropy --epochs 3
+mpirun -np 3 ./MPIDriver.py mnist_arch.json train_mnist.list test_mnist.list --loss categorical_crossentropy --epochs 3
 ```
 
 ### Using MPIDriver.py to train your model
