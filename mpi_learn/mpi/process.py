@@ -498,7 +498,8 @@ class MPIMaster(MPIProcess):
                     self.sync_parent()
                     self.sync_children()
                 self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
-            if self.time_step % self.algo.validate_every == 0 and self.time_step > 0:
+            if (self.algo.validate_every > 0 and 
+                    self.time_step % self.algo.validate_every == 0 and self.time_step > 0):
                 epoch_logs = self.validate()
                 self.callbacks.on_epoch_end(self.epoch, epoch_logs)
                 self.epoch += 1
