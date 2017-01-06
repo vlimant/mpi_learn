@@ -27,9 +27,11 @@ class ModelFromJson(ModelBuilder):
             filename: path to JSON file specifying model architecture
     """
 
-    def __init__(self, comm, filename):
+    def __init__(self, comm, filename=None,json_str=None, custom_objects={}):
         self.filename = filename
+        self.json_str = json_str
+	self.custom_objects = custom_objects
         super(ModelFromJson, self).__init__(comm)
 
     def build_model(self):
-        return load_model(self.filename)
+        return load_model(filename=self.filename, json_str=self.json_str, custom_objects=self.custom_objects)
