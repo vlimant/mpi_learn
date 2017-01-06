@@ -46,7 +46,7 @@ def import_keras(tries=10):
             sleep(0.1)
     print "Failed to import keras!"
 
-def load_model(filename=None, json_str=None, weights_file=None, custom_objects=None):
+def load_model(filename=None, json_str=None, weights_file=None, custom_objects={}):
     """Loads model architecture from JSON and instantiates the model.
         filename: path to JSON file specifying model architecture
         json_str: (or) a json string specifying the model architecture
