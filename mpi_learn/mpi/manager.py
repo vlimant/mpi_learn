@@ -204,7 +204,7 @@ class MPIManager(object):
         print "Files for worker %d:" % self.comm_block.Get_rank()
         for f in files_for_this_worker:
             print "  %s" % f
-        self.data.file_names = files_for_this_worker
+        self.data.set_file_names( files_for_this_worker )
 
     def set_val_data(self):
         """Sets the validation data files to be used by the current process
@@ -213,7 +213,7 @@ class MPIManager(object):
         print "Files for validation:" 
         for f in self.val_list:
             print "  %s" % f
-        self.data.file_names = self.val_list
+        self.data.set_file_names( self.val_list )
 
     def make_comms_many(self,comm):
         """Create MPI communicators (Case 1):

@@ -85,10 +85,11 @@ if __name__ == '__main__':
     import_keras()
     import keras.callbacks as cbks
 
+    data = H5Data( batch_size=args.batch, 
+            features_name=args.features_name, labels_name=args.labels_name )
     # We initialize the Data object with the training data list
     # so that we can use it to count the number of training examples
-    data = H5Data( train_list, batch_size=args.batch, 
-            features_name=args.features_name, labels_name=args.labels_name )
+    data.set_file_names( train_list )
     validate_every = data.count_data()/args.batch 
 
     # Some input arguments may be ignored depending on chosen algorithm
