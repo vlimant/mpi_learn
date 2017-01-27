@@ -89,12 +89,13 @@ class MPIManager(object):
           should_validate: boolean determining if this process should run training validation
           synchronous: whether or not to syncronize workers after each update
           callbacks: keras callbacks to use during training
+          worker_callbacks: callbacks to be executed by worker processes
           verbose: whether to make MPIProcess objects verbose
     """
 
     def __init__(self, comm, data, algo, model_builder, num_epochs, train_list, 
             val_list, num_masters=1, synchronous=False, callbacks=[], 
-            verbose=False, custom_objects={}):
+            worker_callbacks=[], verbose=False, custom_objects={}):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -109,6 +110,7 @@ class MPIManager(object):
             val_list: list of validation data files
             synchronous: true if masters should operate in synchronous mode
             callbacks: list of keras callback objects
+            worker_callbacks: list of keras callback objects
             verbose: whether to make MPIProcess objects verbose
         """
         self.data = data
@@ -125,6 +127,7 @@ class MPIManager(object):
         self.val_list = val_list
         self.synchronous = synchronous
         self.callbacks = callbacks
+        self.worker_callbacks = worker_callbacks
         self.verbose = verbose
         self.comm_block = None
         self.comm_masters = None
@@ -178,8 +181,8 @@ class MPIManager(object):
             self.set_train_data()
             self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=parent_rank, 
                     num_epochs=self.num_epochs, data=self.data, algo=self.algo, 
-                    model_builder=self.model_builder, callbacks=self.callbacks, verbose=self.verbose,
-                    custom_objects=self.custom_objects)
+                    model_builder=self.model_builder, callbacks=self.worker_callbacks, 
+                    verbose=self.verbose, custom_objects=self.custom_objects)
 
     def get_num_sync_workers(self, comm):
         """Returns the number of workers the master should wait for
