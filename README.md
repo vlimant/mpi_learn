@@ -1,7 +1,7 @@
 # mpi_learn
 Distributed learning with mpi4py
 
-Dependencies: MPI and mpi4py, numpy, keras
+Dependencies: OpenMPI and `mpi4py` (v. >= 2.0.0), `keras` (v. >= 1.1.0)
 
 Test with the MNIST dataset:
 ```
