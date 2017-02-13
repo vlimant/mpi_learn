@@ -549,7 +549,7 @@ class MPIMaster(MPIProcess):
         self.signal_children()
 
         status = MPI.Status()
-        self.running_workers = range(1, self.num_workers+1)
+        self.running_workers = list(range(1, self.num_workers+1))
         self.waiting_workers_list = []
         
         self.epoch = 0
