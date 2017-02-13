@@ -11,7 +11,7 @@ def data_class_getter(name):
     try:
         return data_dict[name]
     except KeyError:
-        print "%s is not a known Data class. Returning None..." % name
+        print ("%s is not a known Data class. Returning None..." % name)
         return None
 
 

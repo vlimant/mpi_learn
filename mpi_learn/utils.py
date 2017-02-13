@@ -15,11 +15,11 @@ def shapes_from_weights(weights):
 
 def get_num_gpus():
     """Returns the number of GPUs available"""
-    print "Determining number of GPUs...",
+    print ("Determining number of GPUs...",)
     from pycuda import driver 
     driver.init()
     num_gpus = driver.Device.count()
-    print num_gpus
+    print (num_gpus)
     return num_gpus
 
 def get_device_name(dev_type, dev_num, backend='theano'):
@@ -42,9 +42,9 @@ def import_keras(tries=10):
             import keras
             return
         except ValueError:
-            print "Unable to import keras. Trying again: %d" % try_num
+            print ("Unable to import keras. Trying again: %d" % try_num)
             sleep(0.1)
-    print "Failed to import keras!"
+    print ("Failed to import keras!")
 
 def load_model(filename=None, json_str=None, weights_file=None, custom_objects={}):
     """Loads model architecture from JSON and instantiates the model.
