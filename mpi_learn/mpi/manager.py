@@ -201,9 +201,9 @@ class MPIManager(object):
         # The worker takes an extra file if needed
         if self.worker_id < len(self.train_list) % self.num_workers:
             files_for_this_worker.append(self.train_list[ self.num_workers*files_per_worker + self.worker_id ])
-        print ("Files for worker %d:" % self.comm_block.Get_rank())
+        print ("Files for worker {0}:".format(self.comm_block.Get_rank()))
         for f in files_for_this_worker:
-            print ("  %s" % f)
+            print ("  {0}".format(f))
         self.data.set_file_names( files_for_this_worker )
 
     def set_val_data(self):
@@ -212,7 +212,7 @@ class MPIManager(object):
         if not self.should_validate: return None
         print ("Files for validation:" )
         for f in self.val_list:
-            print ("  %s" % f)
+            print ("  {0}".format(f))
         self.data.set_file_names( self.val_list )
 
     def make_comms_many(self,comm):

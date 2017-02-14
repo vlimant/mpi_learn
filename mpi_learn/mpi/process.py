@@ -111,7 +111,7 @@ class MPIProcess(object):
         """Compile the model. Note that the compilation settings
             are relevant only for Workers because the Master updates
             its weights using an mpi_learn optimizer."""
-        print ("Process %d compiling model" % self.rank)
+        print ("Process {0:d} compiling model".format(self.rank))
         self.algo.compile_model( self.model )
 
     def print_metrics(self, metrics):
@@ -121,7 +121,7 @@ class MPIProcess(object):
             print "%s: %.3f" % (names[0],metrics)
         else:
             for name, metric in zip( names, metrics ):
-                print ("%s: %.3f" % (name,metric),)
+                print ("{0}: {1:.3f}".format(name,metric))
             print ("")
 
     def get_logs(self, metrics, val=False):
@@ -173,7 +173,7 @@ class MPIProcess(object):
         try:
             return lookup[name]
         except KeyError:
-            print ("Error: not found in tag dictionary: %s -- returning None" % name)
+            print ("Error: not found in tag dictionary: {0} -- returning None".format(name))
             return None
 
     def recv(self, obj=None, tag=MPI.ANY_TAG, source=None, buffer=False, status=None, comm=None):
@@ -359,7 +359,7 @@ class MPIWorker(MPIProcess):
         # periodically check this request to see if the parent has told us to stop training
         exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
-            print ("MPIWorker %d beginning epoch %d" % (self.rank, epoch))
+            print ("MPIWorker {0:d} beginning epoch {1:d}".format(self.rank, epoch))
             self.callbacks.on_epoch_begin(epoch)
             epoch_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
             i_batch = 0
@@ -375,15 +375,15 @@ class MPIWorker(MPIProcess):
                 self.callbacks.on_batch_end(i_batch, batch_logs)
                 if exit_request.Test():
                     self.stop_training = True
-                    print ("MPIWorker %d received exit request from master" % self.rank)
+                    print ("MPIWorker {0:d} received exit request from master".format(self.rank))
                     break
             if self.stop_training:
                 break
             epoch_metrics = [ m * 1.0 / (i_batch+1) for m in epoch_metrics ]
-            print ("Worker %d average metrics:"%self.rank)
+            print ("Worker {0:d} average metrics:".format(self.rank))
             self.print_metrics(epoch_metrics)
             self.callbacks.on_epoch_end(epoch, self.get_logs(epoch_metrics)) 
-        print ("MPIWorker %d signing off" % self.rank)
+        print ("MPIWorker {0:d} signing off".format(self.rank))
         self.send_exit_to_parent()
         self.callbacks.on_train_end()
         self.send_history_to_parent()
@@ -392,7 +392,7 @@ class MPIWorker(MPIProcess):
         """Train on a single batch"""
         train_loss = self.model.train_on_batch( batch[0], batch[1] )
         if self.verbose:
-            print ("Worker %d metrics:"%self.rank)
+            print ("Worker {0:d} metrics:".format(self.rank))
             self.print_metrics(train_loss)
         return train_loss
 
@@ -441,7 +441,7 @@ class MPIMaster(MPIProcess):
         print (info.format(parent_comm.Get_rank(),parent_rank,parent_comm.Get_size(), 
                 child_comm.Get_size()))
         if self.num_sync_workers > 1:
-            print ("Will wait for updates from %d workers before synchronizing" % self.num_sync_workers)
+            print ("Will wait for updates from {0:d} workers before synchronizing".format(self.num_sync_workers))
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, 
                 algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
                 callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
@@ -534,7 +534,7 @@ class MPIMaster(MPIProcess):
     def shut_down_workers(self):
         """Signal all running workers to shut down"""
         for worker_id in self.running_workers:
-            print ("Signaling worker %d to shut down" % worker_id)
+            print ("Signaling worker {0:d} to shut down".format(worker_id))
             self.send_exit_to_child( worker_id )
 
     def train(self):
@@ -560,7 +560,7 @@ class MPIMaster(MPIProcess):
             if (not self.stop_training) and self.callback_model.stop_training:
                 self.shut_down_workers()
                 self.stop_training = True
-        print ("MPIMaster %d done training" % self.rank)
+        print ("MPIMaster {0:d} done training".format(self.rank))
         # If we did not finish the last epoch, validate one more time.
         # (this happens if the batch size does not divide the dataset size)
         if self.epoch < self.num_epochs:
