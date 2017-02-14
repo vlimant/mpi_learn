@@ -76,7 +76,7 @@ if __name__ == '__main__':
         backend = 'theano'
         device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
                 gpu_for_master=args.master_gpu)
-        print ("Process {} using device {}".format(comm.Get_rank(),device))
+        print ("Process {0} using device {1}".format(comm.Get_rank(),device))
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device)
         # GPU ops need to be executed synchronously in order for profiling to make sense
         if args.profile:
@@ -126,7 +126,7 @@ if __name__ == '__main__':
         histories = manager.process.train() 
         delta_t = time() - t_0
         manager.free_comms()
-        print ("Training finished in %.3f seconds" % delta_t)
+        print ("Training finished in {0:.3f} seconds".format(delta_t))
 
         # Make output dictionary
         out_dict = { "args":vars(args),
@@ -136,4 +136,4 @@ if __name__ == '__main__':
         json_name = '_'.join([model_name,args.trial_name,"history.json"]) 
         with open( json_name, 'w') as out_file:
             out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
-        print ("Wrote trial information to {}".format(json_name))
+        print ("Wrote trial information to {0}".format(json_name))
