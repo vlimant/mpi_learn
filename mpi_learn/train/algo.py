@@ -53,7 +53,7 @@ class Algo(object):
 
         self.optimizer_name = optimizer
         if optimizer is not None:
-            optimizer_args = { arg:val for arg,val in kwargs.iteritems() 
+            optimizer_args = { arg:val for arg,val in kwargs.items() 
                 if arg not in self.supported_opts }
             self.optimizer = get_optimizer( optimizer )(**optimizer_args)
         else:

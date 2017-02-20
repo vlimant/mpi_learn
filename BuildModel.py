@@ -16,10 +16,10 @@ if __name__ == '__main__':
 
     weights_filename = "%s_weights.h5" % model_name 
     model.save_weights( weights_filename, overwrite=True )
-    print "Saved model weights to %s" % weights_filename
+    print ("Saved model weights to {0}".format(weights_filename))
 
     arch_filename = "%s_arch.json" % model_name
     model_arch = model.to_json()
     with open( arch_filename, 'w' ) as arch_file:
         arch_file.write( model_arch )
-    print "Saved model architecture to %s" % arch_filename
+    print ("Saved model architecture to {0}".format(arch_filename))
