@@ -47,6 +47,8 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--optimizer',help='optimizer for master to use',default='adam')
     parser.add_argument('--loss',help='loss function',default='binary_crossentropy')
+    parser.add_argument('--early-stopping', type=int, 
+            dest='early_stopping', help='patience for early stopping')
     parser.add_argument('--worker-optimizer',help='optimizer for workers to use',
             dest='worker_optimizer', default='sgd')
     parser.add_argument('--sync-every', help='how often to sync weights with master', 
@@ -111,6 +113,9 @@ if __name__ == '__main__':
     callbacks.append( cbks.ModelCheckpoint( '_'.join([
         model_name,args.trial_name,"mpi_learn_result.h5"]), 
         monitor='val_loss', verbose=1 ) )
+    if args.early_stopping is not None:
+        callbacks.append( cbks.EarlyStopping( patience=args.early_stopping,
+            verbose=1 ) )
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
