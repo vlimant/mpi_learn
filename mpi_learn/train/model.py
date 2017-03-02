@@ -74,8 +74,10 @@ class ModelFromJsonTF(ModelBuilder):
         return get_device_name(dev_type, dev_num, backend='tensorflow')
 
     def build_model(self):
-        import tensorflow as tf
-        with tf.device(self.device):
+        import keras.backend as K
+        K.set_session( K.tf.Session( config=K.tf.ConfigProto(
+            allow_soft_placement=True, log_device_placement=False) ) )
+        with K.tf.device(self.device):
             model = load_model(filename=self.filename, json_str=self.json_str, 
                     custom_objects=self.custom_objects)
         return model
