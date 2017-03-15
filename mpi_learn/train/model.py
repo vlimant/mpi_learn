@@ -76,7 +76,9 @@ class ModelFromJsonTF(ModelBuilder):
     def build_model(self):
         import keras.backend as K
         K.set_session( K.tf.Session( config=K.tf.ConfigProto(
-            allow_soft_placement=True, log_device_placement=False) ) )
+            allow_soft_placement=True, log_device_placement=False,
+            gpu_options=K.tf.GPUOptions(
+                per_process_gpu_memory_fraction=1./self.comm.Get_size()) ) ) )
         with K.tf.device(self.device):
             model = load_model(filename=self.filename, json_str=self.json_str, 
                     custom_objects=self.custom_objects)
