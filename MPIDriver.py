@@ -12,7 +12,7 @@ from time import time,sleep
 from mpi_learn.mpi.manager import MPIManager, get_device
 from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
-from mpi_learn.train.model import ModelFromJson
+from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF
 from mpi_learn.utils import import_keras
 
 if __name__ == '__main__':
@@ -72,12 +72,15 @@ if __name__ == '__main__':
 
     # Theano is the default backend; use tensorflow if --tf is specified.
     # In the theano case it is necessary to specify the device before importing.
+    device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
+                gpu_for_master=args.master_gpu)
     if args.tf: 
         backend = 'tensorflow'
+        model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device )
+        print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
     else:
         backend = 'theano'
-        device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
-                gpu_for_master=args.master_gpu)
+        model_builder = ModelFromJson( comm, args.model_json )
         print ("Process {0} using device {1}".format(comm.Get_rank(),device))
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device)
         # GPU ops need to be executed synchronously in order for profiling to make sense
@@ -105,8 +108,6 @@ if __name__ == '__main__':
     else:
         algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
-
-    model_builder = ModelFromJson( comm, args.model_json )
 
     # Most Keras callbacks are supported
     callbacks = []
