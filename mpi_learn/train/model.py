@@ -27,14 +27,15 @@ class ModelFromJson(ModelBuilder):
             filename: path to JSON file specifying model architecture
     """
 
-    def __init__(self, comm, filename=None,json_str=None, custom_objects={}):
+    def __init__(self, comm, filename=None,json_str=None, custom_objects={}, weights=None):
         self.filename = filename
         self.json_str = json_str
+        self.weights = weights
 	self.custom_objects = custom_objects
         super(ModelFromJson, self).__init__(comm)
 
     def build_model(self):
-        return load_model(filename=self.filename, json_str=self.json_str, custom_objects=self.custom_objects)
+        return load_model(filename=self.filename, json_str=self.json_str, custom_objects=self.custom_objects, weights_file=self.weights)
 
 class ModelFromJsonTF(ModelBuilder):
     """ModelBuilder class that builds from model architecture specified
@@ -46,9 +47,10 @@ class ModelFromJsonTF(ModelBuilder):
     """
 
     def __init__(self, comm, filename=None, json_str=None, device_name='cpu', 
-            custom_objects={}):
+            custom_objects={}, weights=None):
         self.filename = filename
         self.json_str = json_str
+        self.weights = weights
 	self.custom_objects = custom_objects
         self.device = self.get_device_name(device_name)
         super(ModelFromJsonTF, self).__init__(comm)
@@ -81,5 +83,5 @@ class ModelFromJsonTF(ModelBuilder):
                 per_process_gpu_memory_fraction=1./self.comm.Get_size()) ) ) )
         with K.tf.device(self.device):
             model = load_model(filename=self.filename, json_str=self.json_str, 
-                    custom_objects=self.custom_objects)
+                    custom_objects=self.custom_objects, weights_file=self.weights)
         return model
