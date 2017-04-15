@@ -100,7 +100,7 @@ class MPIProcess(object):
             self.callback_model = self.model.callback_model
         else:
             self.callback_model = self.model
-        self.callbacks._set_model(self.callback_model)
+        self.callbacks.set_model(self.callback_model)
         self.callback_model.stop_training = False
 
     def train(self):
