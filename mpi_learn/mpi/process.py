@@ -118,7 +118,7 @@ class MPIProcess(object):
         """Display metrics computed during training or validation"""
         names = self.model.metrics_names
         if len(names) == 1:
-            print "%s: %.3f" % (names[0],metrics)
+            print ("%s: %.3f" % (names[0],metrics))
         else:
             for name, metric in zip( names, metrics ):
                 print ("{0}: {1:.3f}".format(name,metric))
