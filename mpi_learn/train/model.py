@@ -31,7 +31,7 @@ class ModelFromJson(ModelBuilder):
         self.filename = filename
         self.json_str = json_str
         self.weights = weights
-	self.custom_objects = custom_objects
+        self.custom_objects = custom_objects
         super(ModelFromJson, self).__init__(comm)
 
     def build_model(self):
@@ -51,7 +51,7 @@ class ModelFromJsonTF(ModelBuilder):
         self.filename = filename
         self.json_str = json_str
         self.weights = weights
-	self.custom_objects = custom_objects
+        self.custom_objects = custom_objects
         self.device = self.get_device_name(device_name)
         super(ModelFromJsonTF, self).__init__(comm)
 
@@ -66,11 +66,11 @@ class ModelFromJsonTF(ModelBuilder):
                 dev_num = int(device[3:])
                 dev_type = 'gpu'
             except ValueError:
-                print "GPU number could not be parsed from {}; using CPU".format(device)
+                print ("GPU number could not be parsed from {}; using CPU".format(device))
                 dev_num = 0
                 dev_type = 'cpu'
         else:
-            print "Please specify 'cpu' or 'gpuN' for device name"
+            print ("Please specify 'cpu' or 'gpuN' for device name")
             dev_num = 0
             dev_type = 'cpu'
         return get_device_name(dev_type, dev_num, backend='tensorflow')
