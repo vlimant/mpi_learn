@@ -91,13 +91,13 @@ class MPIProcess(object):
             for obj in remove_for_worker:
                 self.callbacks_list = [ c for c in self.callbacks_list 
                         if not isinstance(c, obj) ]
-        self.model.history = cbks.History()
-        self.callbacks = cbks.CallbackList( self.callbacks_list + [self.model.history] )
+        self.model.set_history( cbks.History())
+        self.callbacks = cbks.CallbackList( self.callbacks_list + [self.model.history()] )
 
         # it's possible to callback a different model than self
         # (used by Sequential models)
-        if hasattr(self.model, 'callback_model') and self.model.callback_model:
-            self.callback_model = self.model.callback_model
+        if hasattr(self.model, 'callback_model') and self.model.callback_model():
+            self.callback_model = self.model.callback_model()
         else:
             self.callback_model = self.model
         self.callbacks.set_model(self.callback_model)
@@ -116,7 +116,7 @@ class MPIProcess(object):
 
     def print_metrics(self, metrics):
         """Display metrics computed during training or validation"""
-        names = self.model.metrics_names
+        names = self.model.metrics_names()
         if len(names) == 1:
             print "%s: %.3f" % (names[0],metrics)
         else:
@@ -129,10 +129,10 @@ class MPIProcess(object):
             If val is True, appends 'val' to the beginning of each metric name"""
         if val:
             return { 'val_'+name:np.asscalar(metric) for name, metric in 
-                    zip( self.model.metrics_names, metrics ) }
+                    zip( self.model.metrics_names(), metrics ) }
         else:
             return { name:np.asscalar(metric) for name, metric in 
-                    zip( self.model.metrics_names, metrics ) }
+                    zip( self.model.metrics_names(), metrics ) }
 
     def do_send_sequence(self):
         """Actions to take when sending an update to parent:
@@ -247,7 +247,7 @@ class MPIProcess(object):
             if hasattr(self, 'histories'):
                 self.send( obj=self.histories, tag='history' )
             else:
-                self.send( obj=self.model.history.history, tag='history' )
+                self.send( obj=self.model.history().history, tag='history' )
 
     def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, check_permission=False):
         """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
@@ -361,7 +361,7 @@ class MPIWorker(MPIProcess):
         for epoch in range(self.num_epochs):
             print ("MPIWorker {0:d} beginning epoch {1:d}".format(self.rank, epoch))
             self.callbacks.on_epoch_begin(epoch)
-            epoch_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
+            epoch_metrics = [ 0.0 for i in range( len(self.model.metrics_names()) ) ]
             i_batch = 0
             for i_batch, batch in enumerate(self.data.generate_data()):
                 self.callbacks.on_batch_begin(i_batch)
@@ -390,7 +390,7 @@ class MPIWorker(MPIProcess):
 
     def train_on_batch(self, batch):
         """Train on a single batch"""
-        train_loss = self.model.train_on_batch( batch[0], batch[1] )
+        train_loss = self.model.train_on_batch( x=batch[0], y=batch[1] )
         if self.verbose:
             print ("Worker {0:d} metrics:".format(self.rank))
             self.print_metrics(train_loss)
@@ -566,7 +566,7 @@ class MPIMaster(MPIProcess):
         if self.epoch < self.num_epochs:
             epoch_logs = self.validate()
             self.callbacks.on_epoch_end(self.epoch, epoch_logs)
-        self.histories[str(self.rank)] = self.model.history.history
+        self.histories[str(self.rank)] = self.model.history().history
         self.send_exit_to_parent()
         self.callbacks.on_train_end()
         self.send_history_to_parent()
@@ -580,10 +580,11 @@ class MPIMaster(MPIProcess):
             return {}
         self.model.set_weights(self.weights)
 
-        val_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
+        val_metrics = [ 0.0 for i in range( len(self.model.metrics_names()) ) ]
         i_batch = 0
         for i_batch, batch in enumerate(self.data.generate_data()):
-            new_val_metrics = self.model.test_on_batch(*batch)
+            #new_val_metrics = self.model.test_on_batch(*batch)
+            new_val_metrics = self.model.test_on_batch(x=batch[0], y =batch[1] )
             for i in range(len(val_metrics)):
                 val_metrics[i] += new_val_metrics[i]
         val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]

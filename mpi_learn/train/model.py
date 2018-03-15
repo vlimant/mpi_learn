@@ -2,6 +2,52 @@
 
 from mpi_learn.utils import load_model, get_device_name
 
+class MPIModel(object):
+    """Class that abstract all details of the model
+    """
+    def __init__(self, single_model=None):
+        """Arguments:                                                                                                                                                                                                                                                                            comm: MPI communicator                                                                                                                                                                                                                                                          """
+        self.model = single_model
+
+    def get_weights(self):
+        if self.model:
+            return self.model.get_weights()
+        
+    def set_weights(self, w ):
+        if self.model:
+            self.model.set_weights( w )
+            
+    def history(self):
+        if self.model:
+            return self.model.history
+
+    def set_history(self, h):
+        if self.model:
+            self.model.history = h
+
+    def compile(self, **args):
+        if self.model:
+            self.model.compile( **args )
+
+    def metrics_names(self):
+        if self.model:
+            return self.model.metrics_names
+
+    def callback_model(self):
+        if self.model:
+            return getattr(self.model, 'callback_model', None)
+        
+    def train_on_batch(self, **args):
+        if self.model:
+            return self.model.train_on_batch( **args )
+
+    def test_on_batch(self, **args):
+        if self.model:
+            return self.model.test_on_batch( **args )        
+
+        
+
+
 class ModelBuilder(object):
     """Class containing instructions for building neural net models.
         Derived classes should implement the build_model function.
@@ -35,7 +81,7 @@ class ModelFromJson(ModelBuilder):
         super(ModelFromJson, self).__init__(comm)
 
     def build_model(self):
-        return load_model(filename=self.filename, json_str=self.json_str, custom_objects=self.custom_objects, weights_file=self.weights)
+        return MPIModel(single_model=load_model(filename=self.filename, json_str=self.json_str, custom_objects=self.custom_objects, weights_file=self.weights))
 
 class ModelFromJsonTF(ModelBuilder):
     """ModelBuilder class that builds from model architecture specified
@@ -84,4 +130,4 @@ class ModelFromJsonTF(ModelBuilder):
         with K.tf.device(self.device):
             model = load_model(filename=self.filename, json_str=self.json_str, 
                     custom_objects=self.custom_objects, weights_file=self.weights)
-        return model
+        return MPIModel(single_model = model)
