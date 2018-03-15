@@ -83,7 +83,7 @@ if __name__ == '__main__':
         backend = 'theano'
         model_builder = ModelFromJson( comm, args.model_json ,weights=args.model_weights)
         print ("Process {0} using device {1}".format(comm.Get_rank(),device))
-        os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device)
+        os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
         # GPU ops need to be executed synchronously in order for profiling to make sense
         if args.profile:
             os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
