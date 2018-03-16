@@ -95,7 +95,14 @@ class Algo(object):
         else:
             update = []
             for cur_w, new_w in zip( cur_weights, new_weights ):
-                update.append( np.subtract( cur_w, new_w ) )
+                print ("compute_update",type(cur_w))
+                if type(cur_w) == list:
+                    ## polymorph case
+                    update.append([])
+                    for sub_c_w,sub_n_w in zip(cur_w, new_w):
+                        update[-1].append( np.subtract( sub_c_w,sub_n_w) )
+                else:
+                    update.append( np.subtract( cur_w, new_w ) )
             return update
 
     def set_worker_model_weights(self, model, weights):
