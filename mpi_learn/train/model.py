@@ -234,6 +234,14 @@ class MPIModel(object):
             for m in self.models:
                 m.save( *args, **kwargs )
 
+class GANModel(MPIModel):
+    def __init__(self):
+        self.gen = None
+        self.disc = None
+        MPIModel.__init__(self, models = [ self.gen, self.disc ])
+
+    def test_on_batch(self, **args):
+        pass
 
 class ModelBuilder(object):
     """Class containing instructions for building neural net models.
