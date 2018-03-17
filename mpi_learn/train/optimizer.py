@@ -1,6 +1,7 @@
 ### Optimizers used to update master process weights
 
 import numpy as np
+import copy
 
 from ..utils import weights_from_shapes
 
@@ -14,6 +15,15 @@ class Optimizer(object):
     def apply_update(self, weights, gradient):
         raise NotImplementedError
 
+class MultiOptimizer(Optimizer):
+    def __init__(self, opt, s):
+        self.opts = [copy.deepcopy(opt) for i in range(s)]
+
+    def apply_update(self, weights, gradient):
+        r = []
+        for o,w,g in zip(self.opts, weights, gradient):
+            r.append( o.apply_update(w,g) )
+        return r
 
 class VanillaSGD(Optimizer):
     """Stochastic gradient descent with no extra frills.
@@ -28,7 +38,12 @@ class VanillaSGD(Optimizer):
             learning rate."""
         new_weights = []
         for w, g in zip(weights, gradient):
-            new_weights.append(np.subtract(w, self.learning_rate*g))
+            if type(w) == list:
+                new_weights.append( [] )
+                for ww, gg in zip(w,g):
+                    new_weights[-1].append( np.subtract( ww, self.learning_rate*gg) )
+            else:
+                new_weights.append(np.subtract(w, self.learning_rate*g))
         return new_weights
 
 

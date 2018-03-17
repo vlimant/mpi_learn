@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from .optimizer import get_optimizer
+from .optimizer import get_optimizer, MultiOptimizer
 
 class Algo(object):
     """The Algo class contains all information about the training algorithm.
@@ -95,7 +95,7 @@ class Algo(object):
         else:
             update = []
             for cur_w, new_w in zip( cur_weights, new_weights ):
-                print ("compute_update",type(cur_w))
+                #print ("compute_update",type(cur_w))
                 if type(cur_w) == list:
                     ## polymorph case
                     update.append([])
@@ -116,9 +116,15 @@ class Algo(object):
     def get_elastic_update(self, cur_weights, other_weights):
         """EASGD weights update"""
         new_weights = []
-        for cur_w,other_w in zip( cur_weights, other_weights ):
-            new_w = cur_w - self.elastic_force * np.subtract( cur_w, other_w )
-            new_weights.append( new_w )
+        for m_w,om_w in zip( cur_weights, other_weights ):
+            if type( m_w ) == list:
+                new_weights.append( [] )
+                for cur_w,other_w in zip( m_w, om_w ):
+                    new_w = cur_w - self.elastic_force * np.subtract( cur_w, other_w )
+                    new_weights[-1].append( new_w )
+            else:
+                new_w = cur_w - self.elastic_force * np.subtract( m_w, om_w )
+                new_weights.append( new_w )
         return new_weights
 
     def should_sync(self):
@@ -134,5 +140,8 @@ class Algo(object):
         if self.mode == 'easgd':
             return self.get_elastic_update( weights, update )
         else:
+            if type(weights[0]) == list:
+                if type(self.optimizer)!= MultiOptimizer:
+                    self.optimizer = MultiOptimizer( self.optimizer, len(weights))
             new_weights = self.optimizer.apply_update( weights, update )
             return new_weights
