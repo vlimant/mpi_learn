@@ -2,6 +2,7 @@
 
 from mpi_learn.utils import load_model, get_device_name
 import numpy as np
+import copy
 
 class MPICallbacks(object):
     def __init__(self, cbks):
@@ -194,7 +195,8 @@ class MPIModel(object):
             self.model.compile( **args )
         else:
             for m in self.models:
-                m.compile( **args )
+                c_args = copy.deepcopy( args )
+                m.compile( **c_args )
 
     #def metrics_names(self):
     #    if self.model:
