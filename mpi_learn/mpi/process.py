@@ -198,6 +198,9 @@ class MPIProcess(object):
                 raise Error("Attempting to receive %s from parent, but parent rank is None" % tag)
             source = self.parent_rank 
         tag_num = self.lookup_mpi_tag(tag)
+        if tag == 'history':
+            obj = comm.recv( source=source, tag=tag_num, status=status )
+            return obj
         if buffer:
             if type(obj) == list:
                 for o in obj:
@@ -229,6 +232,9 @@ class MPIProcess(object):
                 raise Error("Attempting to send %s to parent, but parent rank is None" % tag)
             dest = self.parent_rank
         tag_num = self.lookup_mpi_tag(tag)
+        if tag == 'history':
+            comm.send( obj, dest=dest, tag=tag_num )
+            return
         if buffer:
             if type(obj) == list:
                 for o in obj:
