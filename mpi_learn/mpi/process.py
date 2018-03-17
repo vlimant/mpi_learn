@@ -8,6 +8,7 @@ from ..utils import Error, weights_from_shapes, shapes_from_weights
 from ..train.model import MPICallbacks
 ### Classes ###
 
+tell_mpi = False
 class MPIProcess(object):
     """Base class for processes that communicate with one another via MPI.  
 
@@ -111,13 +112,14 @@ class MPIProcess(object):
 
     def print_metrics(self, metrics):
         """Display metrics computed during training or validation"""
-        names = self.model.metrics_names()
-        if len(names) == 1:
-            print "%s: %.3f" % (names[0],metrics)
-        else:
-            for name, metric in zip( names, metrics ):
-                print ("{0}: {1:.3f}".format(name,metric))
-            print ("")
+        self.model.print_metrics( metrics )
+        #names = self.model.metrics_names()
+        #if len(names) == 1:
+        #    print "%s: %.3f" % (names[0],metrics)
+        #else:
+        #    for name, metric in zip( names, metrics ):
+        #        print ("{0}: {1:.3f}".format(name,metric))
+        #    print ("")
 
     def get_logs(self, metrics, val=False):
         """Get dictionary of logs computed during training.
@@ -135,11 +137,17 @@ class MPIProcess(object):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
             -Sync time and model weights with parent"""
+        tell = False
+        if tell: print (self.rank,"start send sequence",self.time_step)
         self.send_update(check_permission=True)
+        if tell: print ("update send")
         self.time_step = self.recv_time_step()
+        if tell: print ("new time step", self.time_step)
         self.recv_weights()
+        if tell: print ("weights received")
         self.algo.set_worker_model_weights( self.model, self.weights )
-
+        if tell: print ("end send sequence")
+        
     ### MPI-related functions below ###
 
     # This dict associates message strings with integers to be passed as MPI tags.
@@ -199,7 +207,7 @@ class MPIProcess(object):
                     else:
                         comm.Recv( o, source=source, tag=tag_num, status=status )
             else:
-                print ("self.recv",type(obj))
+                if tell_mpi: print ("self.recv",type(obj))
                 comm.Recv( obj, source=source, tag=tag_num, status=status )
             return obj
         else:
@@ -277,7 +285,7 @@ class MPIProcess(object):
             if hasattr(self, 'histories'):
                 self.send( obj=self.histories, tag='history' )
             else:
-                self.send( obj=self.model.history().history, tag='history' )
+                self.send( obj=self.model.history(), tag='history' )
 
     def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, check_permission=False):
         """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
@@ -291,9 +299,9 @@ class MPIProcess(object):
             self.send_time_step( comm=comm, dest=dest )
             decision = self.recv_bool( comm=comm, source=dest )
             if not decision: return
-        print ("send_arrays [1]",type(obj))
+        if tell_mpi: print ("send_arrays [1]",type(obj))
         for o in obj:
-            print ("send_arrays [2]",type(o))
+            if tell_mpi: print ("send_arrays [2]",type(o))
             if type(o) == list:
                 for w in o:
                     self.send( w, tag, comm=comm, dest=dest, buffer=True )
@@ -332,9 +340,9 @@ class MPIProcess(object):
             for i in range(len(obj)):
                 obj[i] += tmp[i]
             return
-        print ("recv_arrays [1]",type(obj))
+        if tell_mpi: print ("recv_arrays [1]",type(obj))
         for o in obj:
-            print ("recv_arrays [2]",type(o))
+            if tell_mpi: print ("recv_arrays [2]",type(o))
             if type(o) == list:
                 for w in o:
                     self.recv( w, tag, comm=comm, source=source, buffer=True )
@@ -558,7 +566,8 @@ class MPIMaster(MPIProcess):
                 #self.callbacks.on_epoch_end(self.epoch, epoch_logs)
                 self.callback.on_epoch_end(self.epoch, logs = epoch_logs)
                 self.epoch += 1
-                self.callbacks.on_epoch_begin(self.epoch)
+                #self.callbacks.on_epoch_begin(self.epoch)
+                self.callback.on_epoch_begin(self.epoch)
         else:
             self.sync_child(source)
 
@@ -635,10 +644,11 @@ class MPIMaster(MPIProcess):
     def validate(self):
         """Compute the loss on the validation data.
             Return a dictionary of validation metrics."""
+        tell = True
         if self.has_parent:
             return {}
         self.model.set_weights(self.weights)
-
+        if tell: print ("Starting validation")
         #val_metrics = [ 0.0 for i in range( len(self.model.metrics_names()) ) ]
         val_metrics = np.zeros((1,))
         i_batch = 0
@@ -655,7 +665,10 @@ class MPIMaster(MPIProcess):
         print ("Validation metrics:")
         self.print_metrics(val_metrics)
         #return self.get_logs(val_metrics, val=True)
-        return self.callback.get_logs(val_metrics, val=True)
+        l = self.callback.get_logs(val_metrics, val=True)
+        if tell: print ("Ending validation")        
+        return l 
+        # return self.callback.get_logs(val_metrics, val=True)
 
     def apply_update(self):
         """Updates weights according to update received from worker process"""
