@@ -186,7 +186,7 @@ class GANModel(MPIModel):
         generator_ip = np.multiply(sampled_energies, noise)
         ecal_ip = np.multiply(2, sampled_energies)
         now = time.mktime(time.gmtime())
-        if self.p_t:
+        if self.p_cc>1 and len(self.p_t)%100==0:
             print ("prediction average",np.mean(self.p_t),"[s]' over",len(self.p_t))
         generated_images = self.generator.predict(generator_ip)
         done = time.mktime(time.gmtime())
@@ -203,7 +203,7 @@ class GANModel(MPIModel):
         
         two_pass = False
         #print ("calling discr",self.d_cc)
-        if self.d_t:
+        if self.d_cc>1 and len(self.d_t)%100==0:
             print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
         now = time.mktime(time.gmtime())
         if two_pass:
@@ -236,7 +236,7 @@ class GANModel(MPIModel):
 
 
         #print ("calling gen",self.g_cc)
-        if self.g_t:
+        if self.g_cc>1 and len(self.g_t)%100==0:
             print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
         now = time.mktime(time.gmtime())
         if two_pass:
