@@ -20,7 +20,7 @@ else:
     X_test = X_test.reshape(X_test.shape[0], img_rows, img_cols, 1)
 input_shape = (img_rows, img_cols, 1)
 
-num_train_pieces = 8
+num_train_pieces = 24
 num_test_pieces = 4
 split_X_train = [ X.astype('float32') / 255 for X in array_split(X_train, num_train_pieces) ]
 split_Y_train = [ np_utils.to_categorical(Y,10) for Y in array_split(Y_train, num_train_pieces) ]
