@@ -1,3 +1,4 @@
+import os
 import glob
 import  h5py
 import numpy as np
@@ -26,8 +27,11 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
     _,d,f = F.rsplit('/',2)
     print d,f
     if not 'Ele' in d: continue
+    nf = '/data/shared/3DGAN/%s_%s.h5'%( d,f)
+    if os.path.isfile( nf) :
+        continue
     X,y,ecal = get_data(F)
-    o = h5py.File('/data/shared/3DGAN/%s_%s.h5'%( d,f), 'w')
+    o = h5py.File(nf,'w')
     #o.create_group("X")
     #o['X']['a'] = X
     #o['X']['b'] = ecal
@@ -39,3 +43,6 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
     o['y']['c'] = ecal
     
     o.close()
+
+open('train_3d.list','w').write( '\n'.join(glob.glob('/data/shared/3DGAN/*.h5')[:-4]))
+open('test_3d.list','w').write( '\n'.join(glob.glob('/data/shared/3DGAN/*.h5')[-4:]))
