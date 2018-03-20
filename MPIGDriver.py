@@ -14,6 +14,7 @@ from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
 from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF
 from mpi_learn.utils import import_keras
+import socket
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -78,7 +79,7 @@ if __name__ == '__main__':
     if args.tf: 
         backend = 'tensorflow'
         os.environ['CUDA_VISIBLE_DEVICES'] = device[-1]
-        print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'])
+        print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'],socket.gethostname())
     else:
         backend = 'theano'
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
@@ -93,7 +94,8 @@ if __name__ == '__main__':
             allow_soft_placement=True, log_device_placement=False,
             gpu_options=K.tf.GPUOptions(
                 per_process_gpu_memory_fraction=0.0, allow_growth = True,
-                visible_device_list = os.environ['CUDA_VISIBLE_DEVICES']) ) ) )
+                #visible_device_list = os.environ['CUDA_VISIBLE_DEVICES']
+            ) ) ) )
 
     if args.tf:
         #model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=args.model_weights)
