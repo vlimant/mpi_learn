@@ -28,8 +28,17 @@ class MPICallbacks(object):
         else:
             self.callbacksS = []
             self.callback_models = []
-            for m in modelO.models:
-                self.callbacksS.append( cbks.CallbackList( self.cbks + [m.history] ))
+            filepath = None
+            for im,m in enumerate(modelO.models):
+                new_cbks = [copy.deepcopy(c) for c in self.cbks]
+                for check in new_cbks:
+                    if isinstance(check, cbks.ModelCheckpoint):
+                        if filepath is None:
+                            filepath = check.filepath
+                        check.filepath = 'm%d_%s'%(im, filepath)
+                        print "changing file path",check.filepath                
+                #self.callbacksS.append( cbks.CallbackList( self.cbks + [m.history] ))
+                self.callbacksS.append( cbks.CallbackList( new_cbks + [m.history] ))
                 if hasattr(m, 'callback_model') and m.callback_model:
                     self.callback_models.append( m.callback_model )
                 else:
@@ -231,8 +240,10 @@ class MPIModel(object):
         if self.model:
             self.model.save( *args, **kwargs )
         else:
-            for m in self.models:
-                m.save( *args, **kwargs )
+            for im,m in enumerate(self.models):
+                fn = 'm%d_%s'%( im, args[0])
+                print fn
+                m.save( fn, **kwargs )
 
 class GANModel(MPIModel):
     def __init__(self):
