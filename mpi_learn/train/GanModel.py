@@ -131,7 +131,7 @@ class GANModel(MPIModel):
             output=[fake, aux, ecal],
             name='combined_model'
         )
-        self.combined.summary()
+        #self.combined.summary()
 
         MPIModel.__init__(self, models = [ self.generator,
                                            self.discriminator ])
@@ -146,8 +146,8 @@ class GANModel(MPIModel):
     def compile(self, **args):
         ## args are fully ignored here 
         print('[INFO] IN GAN MODEL: COMPILE')       
-        self.generator.summary()
-        self.discriminator.summary()
+        #self.generator.summary()
+        #self.discriminator.summary()
 
         self.generator.compile(optimizer=RMSprop(), loss='binary_crossentropy')
         self.discriminator.compile(
