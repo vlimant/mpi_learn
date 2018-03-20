@@ -25,7 +25,6 @@ def get_data(datafile):
 
 for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
     _,d,f = F.rsplit('/',2)
-    print d,f
     if not 'Ele' in d: continue
     X = None
     sub_split = 1
@@ -33,6 +32,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
         nf = '/data/shared/3DGAN/%s_%s.h5'%( d,f)
         if os.path.isfile( nf) :
             continue
+        print "processing files",F,"into",nf
         if X is None:
             X,y,ecal = get_data(F)
         o = h5py.File(nf,'w')
@@ -46,6 +46,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
             nf = '/data/shared/3DGAN/%s_%s_sub%s.h5'%( d,f,sub)
             if os.path.isfile( nf) :
                 continue
+            print "processing files",F,"into",nf
             if X is None:
                 X,y,ecal = get_data(F)
                 N = X.shape[0]
