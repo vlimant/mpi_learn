@@ -165,11 +165,93 @@ class GANModel(MPIModel):
         ) 
 
 
-    def predict(self, generator_input):
-        return self.generator.predict(generator_input)
+    #def predict(self, generator_input):
+    #    return self.generator.predict(generator_input)
         
+    def batch_transform(self, x, y):
+        x_disc_real =x
+        y_disc_real = y
+        if self.batch_size is None:
+            ## fix me, maybe
+            self.batch_size = x_disc_real.shape[0]
+            print ("initializing sizes",x_disc_real.shape,[ yy.shape for yy in y])
+
+        noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
+        sampled_energies = np.random.uniform(1, 5,(self.batch_size,1))
+        generator_ip = np.multiply(sampled_energies, noise)
+        ecal_ip = np.multiply(2, sampled_energies)
+        now = time.mktime(time.gmtime())
+        if self.p_cc>1 and len(self.p_t)%100==0:
+            print ("prediction average",np.mean(self.p_t),"[s]' over",len(self.p_t))
+        generated_images = self.generator.predict(generator_ip)
+        done = time.mktime(time.gmtime())
+        if self.p_cc:
+            self.p_t.append( done - now )
+        self.p_cc +=1
+
+        ## need to bit flip the true labels too
+        bf = bit_flip(y[0])
+        y_disc_fake = [bit_flip(np.zeros(self.batch_size)), sampled_energies.reshape((-1,)), ecal_ip.reshape((-1,))]
+        re_y = [bf, y_disc_real[1], y_disc_real[2]]
+
+        ## train the discriminator in one go
+        bb_x  = np.concatenate( (x_disc_real, generated_images))
+        bb_y = [np.concatenate((a,b)) for a,b in zip(re_y, y_disc_fake)]
+        rng_state = np.random.get_state()
+        np.random.shuffle( bb_x )
+        np.random.set_state(rng_state)
+        np.random.shuffle( bb_y[0] )
+        np.random.set_state(rng_state)
+        np.random.shuffle( bb_y[1] )
+        np.random.set_state(rng_state)
+        np.random.shuffle( bb_y[2] )        
+
+        X_for_disc = bb_x
+        Y_for_disc = bb_y
+
+
+        noise = np.random.normal(0, 1, (2*self.batch_size, self.latent_size))
+        sampled_energies = np.random.uniform(1, 5, (2*self.batch_size,1 ))
+        generator_ip = np.multiply(sampled_energies, noise)
+        ecal_ip = np.multiply(2, sampled_energies)
+        trick = np.ones(2*self.batch_size)        
+
+        X_for_combined = [generator_ip]
+        Y_for_combined = [trick,sampled_energies.reshape((-1, 1)), ecal_ip]
+        
+        return (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined)
+
+    def test_on_batch(self,x, y, sample_weight=None):
+        (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined) = self.batch_transform(x,y)
+        epoch_disc_loss = self.discriminator.test_on_batch(X_for_disc,Y_for_disc)
+        epoch_gen_loss = self.combined.test_on_batch(X_for_combined,Y_for_combined)
+
+        return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
     def train_on_batch(self, x, y,
+                   sample_weight=None,
+                   class_weight=None):
+
+        (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined) = self.batch_transform(x,y)
+        if self.d_cc>1 and len(self.d_t)%100==0:
+            print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
+        now = time.mktime(time.gmtime())
+        epoch_disc_loss = self.discriminator.train_on_batch(X_for_disc,Y_for_disc)
+        done = time.mktime(time.gmtime())
+        if self.d_cc:
+            self.d_t.append( done - now )
+        self.d_cc+=1
+        if self.g_cc>1 and len(self.g_t)%100==0:
+            print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
+        now = time.mktime(time.gmtime())
+        epoch_gen_loss = self.combined.train_on_batch(X_for_combined,Y_for_combined)
+        done = time.mktime(time.gmtime())
+        if self.g_cc:
+            self.g_t.append( done - now )
+            
+        return np.asarray([epoch_disc_loss, epoch_gen_loss])
+    
+    def old_train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
 
@@ -227,7 +309,7 @@ class GANModel(MPIModel):
             np.random.set_state(rng_state)
             np.random.shuffle( bb_y[2] )
             epoch_disc_loss = self.discriminator.train_on_batch( bb_x, bb_y )
-            #epoch_disc_loss = (epoch_disc_loss[::2] + epoch_disc_loss[1::2])/2.
+
 
         done = time.mktime(time.gmtime())
         if self.d_cc:
@@ -264,7 +346,7 @@ class GANModel(MPIModel):
             epoch_gen_loss = self.combined.train_on_batch(
                 [generator_ip],
                 [trick,sampled_energies.reshape((-1, 1)), ecal_ip])
-            #epoch_gen_loss = (epoch_gen_loss[::2] + epoch_gen_loss[1::2])/2.
+
             
         
         done = time.mktime(time.gmtime())
