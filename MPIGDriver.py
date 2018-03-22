@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 ### This script creates an MPIManager object and launches distributed training.
 
@@ -85,7 +85,7 @@ if __name__ == '__main__':
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
     os.environ['KERAS_BACKEND'] = backend
 
-    print backend
+    print (backend)
     import_keras()
     import keras.callbacks as cbks
     import keras.backend as K
