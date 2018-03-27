@@ -10,14 +10,15 @@ def get_data(datafile):
     y=f.get('target')
     X=np.array(f.get('ECAL'))
     y=(np.array(y[:,1]))
-    X[X < 1e-6] = 0
+    X[X < 1e-4] = 0
     X = np.expand_dims(X, axis=-1)
     X = X.astype(np.float32)
     y = y.astype(np.float32)
+    y = y/100.
     ecal = np.squeeze(np.sum(X, axis=(1, 2, 3)))
-    print X.shape
-    print y.shape
-    print ecal.shape
+    print (X.shape)
+    print (y.shape)
+    print (ecal.shape)
 
     f.close()
     return X, y, ecal
@@ -32,7 +33,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
         nf = '/data/shared/3DGAN/%s_%s.h5'%( d,f)
         if os.path.isfile( nf) :
             continue
-        print "processing files",F,"into",nf
+        print ("processing files",F,"into",nf)
         if X is None:
             X,y,ecal = get_data(F)
         o = h5py.File(nf,'w')
@@ -46,7 +47,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
             nf = '/data/shared/3DGAN/%s_%s_sub%s.h5'%( d,f,sub)
             if os.path.isfile( nf) :
                 continue
-            print "processing files",F,"into",nf
+            print ("processing files",F,"into",nf)
             if X is None:
                 X,y,ecal = get_data(F)
                 N = X.shape[0]

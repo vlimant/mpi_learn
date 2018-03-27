@@ -38,21 +38,21 @@ def discriminator():
 
     x = ZeroPadding3D((2, 2,2))(x)
     #x = Conv3D(8, (5, 5, 5), data_format='channels_first', padding='valid')(x)
-    x = Conv3D(8, 5, 5,5,border_mode='same')(image)
+    x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
     x = LeakyReLU()(x)
     x = BatchNormalization()(x)
     x = Dropout(0.2)(x)
 
     x = ZeroPadding3D((2, 2, 2))(x)
     #x = Conv3D(8, (5, 5,5), data_format='channels_first', padding='valid')(x)
-    x = Conv3D(8, 5, 5,5,border_mode='same')(image)
+    x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
     x = LeakyReLU()(x)
     x = BatchNormalization()(x)
     x = Dropout(0.2)(x)
 
     x = ZeroPadding3D((1, 1, 1))(x)
     #x = Conv3D(8, (5, 5, 5), data_format='channels_first', padding='valid')(x)
-    x = Conv3D(8, 5, 5,5,border_mode='same')(image)
+    x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
     x = LeakyReLU()(x)
     x = BatchNormalization()(x)
     x = Dropout(0.2)(x)
@@ -69,11 +69,11 @@ def discriminator():
 
     fake = Dense(1, activation='sigmoid', name='generation')(dnn_out)
     aux = Dense(1, activation='linear', name='auxiliary')(dnn_out)
-    ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)), output_shape=(1,))(image)
+    ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)))(image)
     #return Model(input=image, output=[fake, aux, ecal])
     return Model(output=[fake, aux, ecal], input=image)
 
-def generator(latent_size=1024, return_intermediate=False):
+def generator(latent_size=200, return_intermediate=False):
 
     latent = Input(shape=(latent_size, ))
 
@@ -113,13 +113,15 @@ def bit_flip(x, prob=0.05):
 
 
 class GANModel(MPIModel):
-    def __init__(self, latent_size=10):
+    def __init__(self, latent_size=200):
         #self.epoch_disc_loss = []
         #self.epoch_gen_loss = []
         print('[INFO] Building generator')
         self.generator = generator(latent_size)
+        self.generator.summary()
         print('[INFO] Building discriminator')
         self.discriminator = discriminator()
+        self.discriminator.summary()
         self.latent_size=latent_size
         self.batch_size= None
         print('[INFO] Building combined')
@@ -132,7 +134,7 @@ class GANModel(MPIModel):
             name='combined_model'
         )
         #self.combined.summary()
-
+        self.combined.summary()
         MPIModel.__init__(self, models = [ self.generator,
                                            self.discriminator ])
 
@@ -153,7 +155,7 @@ class GANModel(MPIModel):
         self.discriminator.compile(
              optimizer=RMSprop(),
              loss=['binary_crossentropy', 'mean_absolute_percentage_error', 'mean_absolute_percentage_error'],
-             loss_weights=[6, 0.2, 0.1]
+             loss_weights=[2, 0.1, 0.1]
         )
 
         self.discriminator.trainable = False
@@ -161,7 +163,7 @@ class GANModel(MPIModel):
            #optimizer=Adam(lr=adam_lr, beta_1=adam_beta_1),
            optimizer=RMSprop(),
            loss=['binary_crossentropy', 'mean_absolute_percentage_error', 'mean_absolute_percentage_error'],
-           loss_weights=[6, 0.2, 0.1]
+           loss_weights=[2, 0.1, 0.1]
         ) 
 
 
@@ -169,17 +171,20 @@ class GANModel(MPIModel):
     #    return self.generator.predict(generator_input)
         
     def batch_transform(self, x, y):
+        root_fit = [0.0018, -0.023, 0.11, -0.28, 2.21]
         x_disc_real =x
-        y_disc_real = y
+        y_disc_real =y
+
         if self.batch_size is None:
             ## fix me, maybe
             self.batch_size = x_disc_real.shape[0]
             print ("initializing sizes",x_disc_real.shape,[ yy.shape for yy in y])
 
         noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
-        sampled_energies = np.random.uniform(1, 5,(self.batch_size,1))
+        sampled_energies = np.random.uniform(0.1, 5,(self.batch_size,1))
         generator_ip = np.multiply(sampled_energies, noise)
-        ecal_ip = np.multiply(2, sampled_energies)
+        ratio = np.polyval(root_fit, sampled_energies)
+        ecal_ip = np.multiply(ratio, sampled_energies)
         now = time.mktime(time.gmtime())
         if self.p_cc>1 and len(self.p_t)%100==0:
             print ("prediction average",np.mean(self.p_t),"[s]' over",len(self.p_t))
@@ -211,9 +216,10 @@ class GANModel(MPIModel):
 
 
         noise = np.random.normal(0, 1, (2*self.batch_size, self.latent_size))
-        sampled_energies = np.random.uniform(1, 5, (2*self.batch_size,1 ))
+        sampled_energies = np.random.uniform(0.1, 5, (2*self.batch_size,1 ))
         generator_ip = np.multiply(sampled_energies, noise)
-        ecal_ip = np.multiply(2, sampled_energies)
+        ratio = np.polyval(root_fit, sampled_energies)
+        ecal_ip = np.multiply(ratio, sampled_energies)
         trick = np.ones(2*self.batch_size)        
 
         X_for_combined = [generator_ip]
@@ -228,7 +234,7 @@ class GANModel(MPIModel):
 
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
-    def train_on_batch(self, x, y,
+    def old_train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
 
@@ -251,22 +257,23 @@ class GANModel(MPIModel):
             
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
     
-    def old_train_on_batch(self, x, y,
+    def train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
-
+        root_fit = [0.0018, -0.023, 0.11, -0.28, 2.21]
         x_disc_real =x
         y_disc_real = y
         if self.batch_size is None:
             ## fix me, maybe 
             self.batch_size = x_disc_real.shape[0]
-            print ("initializing sizes",x_disc_real.shape,[ yy.shape for yy in y])
+            print ("In train_on_batch: initializing sizes",x_disc_real.shape,[ yy.shape for yy in y])
             
             
         noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
-        sampled_energies = np.random.uniform(1, 5,(self.batch_size,1))
+        sampled_energies = np.random.uniform(0.1, 5,(self.batch_size,1))
         generator_ip = np.multiply(sampled_energies, noise)
-        ecal_ip = np.multiply(2, sampled_energies)
+        ratio = np.polyval(root_fit, sampled_energies)
+        ecal_ip = np.multiply(ratio, sampled_energies)
         now = time.mktime(time.gmtime())
         if self.p_cc>1 and len(self.p_t)%100==0:
             print ("prediction average",np.mean(self.p_t),"[s]' over",len(self.p_t))
@@ -283,13 +290,13 @@ class GANModel(MPIModel):
         #print ("got",[yy.shape for yy in re_y])
         #print ("got",[yy.shape for yy in y_disc_fake])
         
-        two_pass = False
+        two_pass = True
         #print ("calling discr",self.d_cc)
         if self.d_cc>1 and len(self.d_t)%100==0:
             print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
         now = time.mktime(time.gmtime())
         if two_pass:
-
+      
             #real_batch_loss = self.discriminator.train_on_batch(x_disc_real, y_disc_real)
             real_batch_loss = self.discriminator.train_on_batch(x_disc_real,re_y)
             fake_batch_loss = self.discriminator.train_on_batch(generated_images, y_disc_fake)
@@ -326,9 +333,10 @@ class GANModel(MPIModel):
             trick = np.ones(self.batch_size)        
             for _ in range(2):
                 noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
-                sampled_energies = np.random.uniform(1, 5, ( self.batch_size,1 ))
+                sampled_energies = np.random.uniform(0.1, 5, ( self.batch_size,1 ))
                 generator_ip = np.multiply(sampled_energies, noise)
-                ecal_ip = np.multiply(2, sampled_energies)
+                ratio = np.polyval(root_fit, sampled_energies)
+                ecal_ip = np.multiply(ratio, sampled_energies)
                 
                 gen_losses.append(self.combined.train_on_batch(
                     [generator_ip],
@@ -339,9 +347,10 @@ class GANModel(MPIModel):
             ]
         else:
             noise = np.random.normal(0, 1, (2*self.batch_size, self.latent_size))
-            sampled_energies = np.random.uniform(1, 5, (2*self.batch_size,1 ))
+            sampled_energies = np.random.uniform(0.1, 5, (2*self.batch_size,1 ))
             generator_ip = np.multiply(sampled_energies, noise)
-            ecal_ip = np.multiply(2, sampled_energies)
+            ratio = np.polyval(root_fit, sampled_energies)
+            ecal_ip = np.multiply(ratio, sampled_energies)
             trick = np.ones(2*self.batch_size)
             epoch_gen_loss = self.combined.train_on_batch(
                 [generator_ip],
