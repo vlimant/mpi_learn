@@ -32,7 +32,9 @@ def discriminator():
     image = Input(shape=( 25, 25, 25,1 ))
 
     #x = Conv3D(32, (5, 5,5), data_format='channels_first', padding='same')(image)
-    x = Conv3D(32, 5, 5,5,border_mode='same')(image)
+    x = Conv3D(32, 5, 5,5,border_mode='same',
+init='he_uniform'
+    )(image)
     x = LeakyReLU()(x)
     x = Dropout(0.2)(x)
 
@@ -70,6 +72,7 @@ def discriminator():
     fake = Dense(1, activation='sigmoid', name='generation')(dnn_out)
     aux = Dense(1, activation='linear', name='auxiliary')(dnn_out)
     ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)))(image)
+
     #return Model(input=image, output=[fake, aux, ecal])
     return Model(output=[fake, aux, ecal], input=image)
 
@@ -77,7 +80,7 @@ def generator(latent_size=200, return_intermediate=False):
 
     latent = Input(shape=(latent_size, ))
 
-    x = Dense(64 * 7* 7)(latent)
+    x = Dense(64 * 7* 7, init='he_uniform')(latent)
     x = Reshape((7, 7,8, 8))(x)
     x = Conv3D(64, 6, 6, 8, border_mode='same', init='he_uniform')(x)
     x = LeakyReLU()(x)
@@ -166,6 +169,21 @@ class GANModel(MPIModel):
            loss_weights=[2, 0.1, 0.1]
         ) 
 
+        #import tensorflow as tf
+        #import socket
+        #print ("init all",socket.gethostname())
+        #sess = K.get_session()
+        #sess.run(tf.global_variables_initializer())
+        #sess.run(tf.local_variables_initializer())
+        #print ("alright",socket.gethostname())
+        
+        #import tensorflow as tf
+        #tf.global_variables_initializer()
+        #print ("trying to get the weights")
+        #gtw = self.generator.get_weights()
+        #dtw = self.discriminator.get_weights()
+        #ctw = self.combined.get_weights()
+        #return [gtw,dtw,ctw]
 
     #def predict(self, generator_input):
     #    return self.generator.predict(generator_input)
@@ -234,7 +252,7 @@ class GANModel(MPIModel):
 
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
-    def old_train_on_batch(self, x, y,
+    def _onepass_train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
 
@@ -260,6 +278,13 @@ class GANModel(MPIModel):
     def train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
+        #self._twopass_train_on_batch(x,y,sample_weight,class_weight)
+        self._onepass_train_on_batch(x,y,sample_weight,class_weight)
+        
+    def _twopass_train_on_batch(self, x, y,
+                   sample_weight=None,
+                   class_weight=None):
+        
         root_fit = [0.0018, -0.023, 0.11, -0.28, 2.21]
         x_disc_real =x
         y_disc_real = y
@@ -377,6 +402,9 @@ class GANModelBuilder(ModelBuilder):
         
     def build_model(self):
         if self.tf:
+            ## I have to declare the device explictely
+            #with K.tf.device('/gpu:0'):#self.device if 'gpu' in self.device else ''):
+            #with K.tf.device(self.device if 'gpu' in self.device else ''):
             m = GANModel()
             return m
         else:

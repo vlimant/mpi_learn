@@ -69,10 +69,21 @@ class MPIProcess(object):
 
     def build_model(self):
         """Builds the Keras model and updates model-related attributes"""
+        tell_me = True
+        import time
+        import socket
+        time.sleep(10*(self.rank)) ## 10 s wait per worker
+        print("building model",socket.gethostname(),self.rank)
         self.model = self.model_builder.build_model()
+
         self.compile_model()
+        if tell_me: print ("getting weights",socket.gethostname())
         self.weights = self.model.get_weights()
+        if tell_me: print ("formatting update")
         self.update = self.model.format_update()
+        if tell_me: print ("done with model",socket.gethostname(),self.rank)
+        time.sleep( 300 )## all wait for 5 min before moving on
+        if tell_me: print ("moving on",socket.gethostname(),self.rank)
 
     def check_sanity(self):
         """Throws an exception if any model attribute has not been set yet."""
@@ -109,7 +120,8 @@ class MPIProcess(object):
             its weights using an mpi_learn optimizer."""
         print ("Process {0:d} compiling model".format(self.rank))
         self.algo.compile_model( self.model )
-
+        print ("compiled")
+        
     def print_metrics(self, metrics):
         """Display metrics computed during training or validation"""
         self.model.print_metrics( metrics )
@@ -386,6 +398,7 @@ class MPIProcess(object):
         #    self.weights = weights_from_shapes( self.weights_shapes )
         #for w in self.weights:
         #    self.bcast( w, comm=comm, root=root, buffer=True )
+        print("bcasting weights")
         self.bcast( self.weights, comm=comm, root=root, buffer=True )
 
 
