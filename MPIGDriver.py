@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python2
 
 ### This script creates an MPIManager object and launches distributed training.
 
@@ -76,7 +76,7 @@ if __name__ == '__main__':
     # In the theano case it is necessary to specify the device before importing.
     device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
                 gpu_for_master=args.master_gpu)
-    hide_device = False
+    hide_device = True
     if args.tf: 
         backend = 'tensorflow'
         if hide_device:
