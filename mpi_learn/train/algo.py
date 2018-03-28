@@ -137,11 +137,13 @@ class Algo(object):
     def apply_update(self, weights, update):
         """Calls the optimizer to apply an update
             and returns the resulting weights"""
+        #print ("apply_update",self.mode)
         if self.mode == 'easgd':
             return self.get_elastic_update( weights, update )
         else:
             if type(weights[0]) == list:
                 if type(self.optimizer)!= MultiOptimizer:
+                    print ("initializing MultiOptimizer")
                     self.optimizer = MultiOptimizer( self.optimizer, len(weights))
             new_weights = self.optimizer.apply_update( weights, update )
             return new_weights
