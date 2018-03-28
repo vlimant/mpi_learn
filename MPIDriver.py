@@ -77,20 +77,40 @@ if __name__ == '__main__':
                 gpu_for_master=args.master_gpu)
     if args.tf: 
         backend = 'tensorflow'
-        model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=args.model_weights)
-        print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
+        os.environ['CUDA_VISIBLE_DEVICES'] = device[-1]
+        print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'])
     else:
         backend = 'theano'
+        os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
+    os.environ['KERAS_BACKEND'] = backend
+
+    print backend
+    import_keras()
+    import keras.callbacks as cbks
+    import keras.backend as K
+    if args.tf:
+        K.set_session( K.tf.Session( config=K.tf.ConfigProto(
+            allow_soft_placement=True, log_device_placement=False,
+            gpu_options=K.tf.GPUOptions(
+                per_process_gpu_memory_fraction=0.0, allow_growth = True,
+                visible_device_list = os.environ['CUDA_VISIBLE_DEVICES']) ) ) )
+
+    if args.tf:
+        #model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=args.model_weights)
+        from mpi_learn.train.GanModel import GANModelBuilder
+        model_builder  = GANModelBuilder( comm , device_name=device, tf= True)
+        print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
+    else:
         #model_builder = ModelFromJson( comm, args.model_json ,weights=args.model_weights)
-        model_builder = ModelFromJson( comm, [args.model_json, args.model_json] ,weights=args.model_weights)
+        #model_builder = ModelFromJson( comm, [args.model_json, args.model_json] ,weights=args.model_weights)
+        from mpi_learn.train.GanModel import GANModelBuilder
+        model_builder  = GANModelBuilder( comm , device_name=device)
         print ("Process {0} using device {1}".format(comm.Get_rank(),device))
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
         # GPU ops need to be executed synchronously in order for profiling to make sense
         if args.profile:
             os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-    os.environ['KERAS_BACKEND'] = backend
-    import_keras()
-    import keras.callbacks as cbks
+
 
     data = H5Data( batch_size=args.batch, 
             features_name=args.features_name, labels_name=args.labels_name )
