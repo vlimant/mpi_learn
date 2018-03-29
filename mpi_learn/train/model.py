@@ -136,7 +136,7 @@ class MPIModel(object):
             for im,m in enumerate(self.models):
                 names = m.metrics_names
                 ametric = metrics[im,...]
-                print ('model {0}'.format( im ))
+                print ('model {0} {1}'.format( im ,m.name))
                 for name, metric in zip( names,ametric):
                     print ("{0}: {1:.3f}".format(name,metric))
                 print ("")
@@ -204,6 +204,7 @@ class MPIModel(object):
             self.model.compile( **args )
         else:
             for m in self.models:
+                ## this does not work
                 c_args = copy.deepcopy( args )
                 m.compile( **c_args )
 
