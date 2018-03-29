@@ -55,6 +55,7 @@ class Algo(object):
         if optimizer is not None:
             optimizer_args = { arg:val for arg,val in kwargs.items() 
                 if arg not in self.supported_opts }
+            print ("creating optimizer",optimizer)
             self.optimizer = get_optimizer( optimizer )(**optimizer_args)
         else:
             self.optimizer = None
@@ -143,7 +144,7 @@ class Algo(object):
         else:
             if type(weights[0]) == list:
                 if type(self.optimizer)!= MultiOptimizer:
-                    print ("initializing MultiOptimizer")
+                    print ("initializing MultiOptimizer from", self.optimizer)
                     self.optimizer = MultiOptimizer( self.optimizer, len(weights))
             new_weights = self.optimizer.apply_update( weights, update )
             return new_weights
