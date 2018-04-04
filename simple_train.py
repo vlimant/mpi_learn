@@ -7,16 +7,15 @@ import time
 
 gm = GANModel(checkpoint=False)
 
-reload = False
+restart = False
 fresh = True
 tag=''
-if reload:
+lr = None
+
+if restart:
     tag+='reload_'
     print ("Reloading")
-
-    p = False
-    lr = 0.01
-    if not p:
+    if lr:
         gm.compile( prop = False, lr=lr)
         tag+='sgd%s_'%lr
     else:
@@ -28,11 +27,12 @@ if reload:
     gm.discriminator.load_weights('FullRunApr3/simple_discriminator.h5')
     gm.combined.load_weights('FullRunApr3/simple_combined.h5')
 else:
-    lr = 0.0
     if lr:
         gm.compile(prop = False, lr=lr)
+        tag+='sgd%s_'%lr
     else:
         gm.compile()
+        tag+='rmsprop_'
 
     if not fresh:
         try:
@@ -42,7 +42,8 @@ else:
             print ("fresh weights")
     else:
         tag+='fresh_'
-            
+
+print (tag,"is the option")
 
 files = filter(None,open('train_3d.list').read().split('\n'))
 history = {}
