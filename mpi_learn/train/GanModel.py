@@ -60,8 +60,8 @@ def weights_diff( m ,lap=True, init=False,label='', alert=1000.):
             if not any([abs(vv) > alert for vv in dd[:3]]):
                 continue
         print (ii,'WD %s'%label,dd)
-        if dd[-2] == (8,):
-            print ("\t",_diffs[ii])
+        #if dd[-2] == (8,):
+        #    print ("\t",_diffs[ii])
     if lap:
         weights_diff.old_weights = m.get_weights()
         
@@ -176,7 +176,7 @@ class GANModel(MPIModel):
     def __init__(self, latent_size=200, checkpoint=True):
         self.tell = True
         self._onepass = False#True
-        self._heavycheck = False
+        self._heavycheck = True
         self._show_values = False
         self._show_loss = False
         self._show_weights = False
@@ -333,7 +333,11 @@ class GANModel(MPIModel):
             loss_weights=self.discr_loss_weights
         )
 
-        self.discriminator.trainable = False
+        if hasattr(self,'fixed_discriminator'):
+            self.fixed_discriminator.trainable = False
+        else:
+            self.discriminator.trainable = False
+        
         self.combined.compile(
             optimizer=make_opt(**args),
             loss=['binary_crossentropy', 'mean_absolute_percentage_error', 'mean_absolute_percentage_error'],
@@ -518,19 +522,31 @@ class GANModel(MPIModel):
             weights_names = []
             for l in on_weight.layers:
                 weights_names += [ll.name for ll in l.weights]
-            weights( on_weight )
+            if self._show_weights:
+                weights( on_weight )
             weights_diff( on_weight , init=True)
         
         now = time.mktime(time.gmtime())
         real_batch_loss = self.discriminator.train_on_batch(x_disc_real,re_y)
+        if hasattr(self,'fixed_discriminator'):
+            self.fixed_discriminator.set_weights( self.discriminator.get_weights())
         if self._heavycheck:
-            #weights( on_weight )
+            if show_weights: weights( on_weight )
             weights_diff( on_weight , label='D-real')
         
         fake_batch_loss = self.discriminator.train_on_batch(generated_images, y_disc_fake)
+
+        if hasattr(self,'fixed_discriminator'):
+            ## pass things over
+            self.fixed_discriminator.set_weights( self.discriminator.get_weights())
+            self.fixed_discriminator.trainable = False
+        else:
+            self.discriminator.trainable = False
+            
         if self._heavycheck:
-            #weights( on_weight )
+            if show_weights: weights( on_weight )
             weights_diff( on_weight , label='D-fake')
+
             
         if show_loss:
             #print (self.discriminator.metrics_names)
@@ -554,11 +570,6 @@ class GANModel(MPIModel):
 
             #print ("Right",np.ravel(check_on_weight[1])[:10])
 
-        self.discriminator.trainable = False
-        if hasattr(self,'fixed_discriminator'):
-            ## pass things over
-            self.fixed_discriminator.set_weights( self.discriminator.get_weights())
-            
         if self.g_cc>1 and len(self.g_t)%100==0:
             print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
             now = time.mktime(time.gmtime())
@@ -569,12 +580,12 @@ class GANModel(MPIModel):
             self.g_t.append( done - now )
         c_loss1= self.combined.train_on_batch( x_comb1,y_comb1)
         if self._heavycheck:
-            weights( on_weight )
+            if show_weights: weights( on_weight )
             weights_diff( on_weight , label ='C-1')        
         c_loss2= self.combined.train_on_batch( x_comb2,y_comb2)
         #c_loss2= c_loss1
         if self._heavycheck:
-            weights( on_weight )
+            if show_weights: weights( on_weight )
             weights_diff( on_weight , label='C-2')
             
         if show_loss:
