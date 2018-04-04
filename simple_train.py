@@ -5,13 +5,41 @@ import json
 import time
 
 gm = GANModel()
-gm.compile()
 
-try:
-    gm.generator.load_weights('simple_generator.h5')
-    gm.discriminator.load_weights('simple_discriminator.h5')
-except:
-    print ("fresh weights")
+reload = False
+fresh = True
+tag=''
+if reload:
+    tag+='reload_'
+    print ("Reloading")
+
+    p = False
+    lr = 0.01
+    if not p:
+        gm.compile( prop = False, lr=lr)
+        tag+='sgd%s_'%lr
+    else:
+        gm.compile( prop = True)
+        tag+='rmsprop_'
+
+    ## start from an exiting model
+    gm.generator.load_weights('FullRunApr3/simple_generator.h5')
+    gm.discriminator.load_weights('FullRunApr3/simple_discriminator.h5')
+    gm.combined.load_weights('FullRunApr3/simple_combined.h5')
+else:
+    lr = 0.0
+    if lr:
+        gm.compile(prop = False, lr=lr)
+    else:
+        gm.compile()
+
+    if not fresh:
+        try:
+            gm.generator.load_weights('simple_generator.h5')
+            gm.discriminator.load_weights('simple_discriminator.h5')
+        except:
+            print ("fresh weights")
+    
 
 files = filter(None,open('train_3d.list').read().split('\n'))
 history = {}
