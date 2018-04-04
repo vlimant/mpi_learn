@@ -4,7 +4,8 @@ import setGPU
 import json
 import time
 
-gm = GANModel()
+
+gm = GANModel(checkpoint=False)
 
 reload = False
 fresh = True
@@ -39,7 +40,9 @@ else:
             gm.discriminator.load_weights('simple_discriminator.h5')
         except:
             print ("fresh weights")
-    
+    else:
+        tag+='fresh_'
+            
 
 files = filter(None,open('train_3d.list').read().split('\n'))
 history = {}
