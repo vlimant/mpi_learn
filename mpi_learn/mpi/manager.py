@@ -61,7 +61,7 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     #else:
     #    return 'gpu%d' % (worker_id%(max_gpu+1))
 
-    def get_gpu_list(mem_lim = 3000):
+    def get_gpu_list(mem_lim = 5000):
         import gpustat
         stats = gpustat.GPUStatCollection.new_query()
         ids = list(map(lambda gpu: int(gpu.entry['index']), stats))
