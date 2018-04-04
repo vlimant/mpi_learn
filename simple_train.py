@@ -19,10 +19,17 @@ etimes=[]
 ftimes={}
 start = time.mktime(time.gmtime())
 
+
+train_me = True
+over_test= True
+max_batch = 10
+ibatch=0
 for e in range(3): ## epochs
     history[e] = []
     ftimes[e] = []
-    e_start = time.mktime(time.gmtime())    
+    e_start = time.mktime(time.gmtime())
+    if max_batch and ibatch>max_batch:
+        break
     for f in files:
         f_start = time.mktime(time.gmtime())            
         print ("new file",f,"epoch",e)
@@ -34,27 +41,37 @@ for e in range(3): ## epochs
         
         
         N = X.shape[0]
-        bs =100
+        bs =200
         start=0
         end = start+bs
         while end<N:
+            if max_batch and ibatch>max_batch:
+                break
             sub_X = X[start:end]
             sub_Y = [cat[start:end], E[start:end],cellE[start:end]]
-            
-            losses = gm.train_on_batch(sub_X,sub_Y)
-            print (losses)
-            #open('simple_train.json','w').write(json.dumps( {'h':history,'et':etimes,'ft':ftimes} ))            
+            ibatch+=1
+            print (ibatch,ibatch>max_batch,max_batch)
+            if over_test or not train_me:
+                t_losses = gm.test_on_batch(sub_X,sub_Y)
+                print (t_losses)            
+            if train_me:
+                losses = gm.train_on_batch(sub_X,sub_Y)
+
+            #print (losses)
             history[e].append( [list(l) for l in losses] )
             start += bs
             end += bs
-        gm.generator.save_weights('simple_generator.h5')
-        gm.discriminator.save_weights('simple_discriminator.h5')
-        gm.combined.save_weights('simple_combined.h5')
+        gm.generator.save_weights('simple_generator_%s.h5'%tag)
+        gm.discriminator.save_weights('simple_discriminator_%s.h5'%tag)
+        gm.combined.save_weights('simple_combined_%s.h5'%tag)
         h.close()
         f_stop = time.mktime(time.gmtime())
         print (f_stop - f_start,"[s] for file",f)
         ftimes[e].append( f_stop - f_start )
-        open('simple_train.json','w').write(json.dumps( {'h':history,'et':etimes,'ft':ftimes} ))
+        open('simple_train_%s.json'%tag,'w').write(json.dumps( {'h':history,'et':etimes,'ft':ftimes} ))
+        if max_batch and ibatch>max_batch:
+            break
+
         
     e_stop = time.mktime(time.gmtime())
     print (e_stop - e_start,"[s] for epoch",e)
