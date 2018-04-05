@@ -250,7 +250,7 @@ class GANModel(MPIModel):
         self.tell = args.get('tell',True)
         self.gen_bn = args.get('gen_bn',True)
         self._onepass = args.get('onepass',bool(int(os.environ.get('GANONEPASS',0))))
-        self._reversedorder = args.get('reversedorder',False)
+        self._reversedorder = args.get('reversedorder',bool(int(os.environ.get('GANREVERSED',0))))
         self._switchingloss = args.get('switchingloss',False)
         self._heavycheck = args.get('heavycheck',False)
         self._show_values = args.get('show_values',False)
