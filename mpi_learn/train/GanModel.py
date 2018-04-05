@@ -28,6 +28,9 @@ from keras.layers.convolutional import (UpSampling3D, Conv3D, ZeroPadding3D,
 from mpi_learn.utils import get_device_name
 from mpi_learn.train.model import MPIModel, ModelBuilder
 
+import keras
+kv2 = keras.__version__.startswith('2')
+
 def hn():
     return socket.gethostname()
 
@@ -67,43 +70,76 @@ def weights_diff( m ,lap=True, init=False,label='', alert=1000.):
         
 weights_diff.old_weights = None
 
-def discriminator(fixed_bn = False):
+def _Conv3D(N,a,b,c,**args):
+    if kv2:
+        if 'border_mode'in args: args['padding'] = args.pop('border_mode')
+        if 'init' in args: args['kernel_initializer'] = args.pop('init')
+        if 'bias' in args: args['use_bias'] = args.pop('bias')
+        return Conv3D(N,(a,b,c), **args)
+    else:
+        return Conv3D(N, a,b,c, **args)
+def _BatchNormalization(**args):
+    if kv2:
+        if 'mode' in args:
+            m=args.pop('mode')
+        args['scale'] = False
+        args['center'] = False
+        return BatchNormalization(**args)
+    else:
+        return BatchNormalization(**args)
 
+def _Dense(N,**args):
+    if kv2:
+        if 'init' in args: args['kernel_initializer'] = args.pop('init')
+        return Dense(N,**args)
+    else:
+        return Dense(N,**args)
+
+def _Model(**args):
+    if kv2:
+        args['outputs'] = args.pop('output')
+        args['inputs'] = args.pop('input')
+        return Model(**args)
+    else:
+        return Model(**args)
+def discriminator(fixed_bn = False):
+    
     image = Input(shape=( 25, 25, 25,1 ), name='image')
 
     bnm=2 if fixed_bn else 0
-    x = Conv3D(32, 5, 5,5,border_mode='same',
+    f=(5,5,5)
+    x = _Conv3D(32, 5, 5,5,border_mode='same',
                name='disc_c1')(image)
     x = LeakyReLU()(x)
     x = Dropout(0.2)(x)
 
     x = ZeroPadding3D((2, 2,2))(x)
-    x = Conv3D(8, 5, 5,5,border_mode='valid',
+    x = _Conv3D(8, 5, 5,5,border_mode='valid',
                name='disc_c2'
     )(x)
     x = LeakyReLU()(x)
-    x = BatchNormalization(name='disc_bn1',
+    x = _BatchNormalization(name='disc_bn1',
                            mode=bnm,
     )(x)
     x = Dropout(0.2)(x)
 
     x = ZeroPadding3D((2, 2, 2))(x)
-    x = Conv3D(8, 5, 5,5,border_mode='valid',
+    x = _Conv3D(8, 5, 5,5,border_mode='valid',
                name='disc_c3'
 )(x)
     x = LeakyReLU()(x)
-    x = BatchNormalization(name='disc_bn2',
+    x = _BatchNormalization(name='disc_bn2',
                            #momentum = 0.00001
                            mode=bnm,
     )(x)
     x = Dropout(0.2)(x)
 
     x = ZeroPadding3D((1, 1, 1))(x)
-    x = Conv3D(8, 5, 5,5,border_mode='valid',
+    x = _Conv3D(8, 5, 5,5,border_mode='valid',
                name='disc_c4'
     )(x)
     x = LeakyReLU()(x)
-    x = BatchNormalization(name='disc_bn3',
+    x = _BatchNormalization(name='disc_bn3',
                            mode=bnm,
     )(x)
     x = Dropout(0.2)(x)
@@ -111,56 +147,58 @@ def discriminator(fixed_bn = False):
     x = AveragePooling3D((2, 2, 2))(x)
     h = Flatten()(x)
 
-    dnn = Model(image, h, name='dnn')
+    dnn = _Model(input=image, output=h, name='dnn')
 
     dnn_out = dnn(image)
 
-    fake = Dense(1, activation='sigmoid', name='classification')(dnn_out)
-    aux = Dense(1, activation='linear', name='energy')(dnn_out)
+    fake = _Dense(1, activation='sigmoid', name='classification')(dnn_out)
+    aux = _Dense(1, activation='linear', name='energy')(dnn_out)
     ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)))(image)
 
-    return Model(output=[fake, aux, ecal], input=image, name='discriminator_model')
+    return _Model(output=[fake, aux, ecal], input=image, name='discriminator_model')
 
-def generator(latent_size=200, return_intermediate=False):
+def generator(latent_size=200, return_intermediate=False, with_bn=True):
 
     latent = Input(shape=(latent_size, ))
 
     bnm=0
-    x = Dense(64 * 7* 7, init='glorot_normal',
+    x = _Dense(64 * 7* 7, init='glorot_normal',
               name='gen_dense1'
     )(latent)
     x = Reshape((7, 7,8, 8))(x)
-    x = Conv3D(64, 6, 6, 8, border_mode='same', init='he_uniform',
+    x = _Conv3D(64, 6, 6, 8, border_mode='same', init='he_uniform',
                name='gen_c1'
     )(x)
     x = LeakyReLU()(x)
-    x = BatchNormalization(name='gen_bn1',
+    if with_bn:
+        x = _BatchNormalization(name='gen_bn1',
                            mode=bnm
     )(x)
     x = UpSampling3D(size=(2, 2, 2))(x)
 
     x = ZeroPadding3D((2, 2, 0))(x)
-    x = Conv3D(6, 6, 5, 8, init='he_uniform',
+    x = _Conv3D(6, 6, 5, 8, init='he_uniform',
                name='gen_c2'
     )(x)
     x = LeakyReLU()(x)
-    x = BatchNormalization(name='gen_bn2',
+    if with_bn:
+        x = _BatchNormalization(name='gen_bn2',
                            mode=bnm)(x)
     x = UpSampling3D(size=(2, 2, 3))(x)
 
     x = ZeroPadding3D((1,0,3))(x)
-    x = Conv3D(6, 3, 3, 8, init='he_uniform',
+    x = _Conv3D(6, 3, 3, 8, init='he_uniform',
                name='gen_c3')(x)
     x = LeakyReLU()(x)
 
-    x = Conv3D(1, 2, 2, 2, bias=False, init='glorot_normal',
+    x = _Conv3D(1, 2, 2, 2, bias=False, init='glorot_normal',
                name='gen_c4')(x)
     x = Activation('relu')(x)
 
-    loc = Model(latent, x)
+    loc = _Model(input=latent, output=x)
     fake_image = loc(latent)
-    Model(input=[latent], output=fake_image)
-    return Model(input=[latent], output=fake_image, name='generator_model')
+    _Model(input=[latent], output=fake_image)
+    return _Model(input=[latent], output=fake_image, name='generator_model')
 
 
 
@@ -207,8 +245,9 @@ class VSGD(SGD):
         return self.updates
                     
 class GANModel(MPIModel):
-    def __init__(self, latent_size=200, checkpoint=True):
+    def __init__(self, latent_size=200, checkpoint=True, gen_bn=True):
         self.tell = True
+        self.gen_bn = gen_bn
         self._onepass = False#True
         self._heavycheck = True
         self._show_values = False
@@ -218,6 +257,7 @@ class GANModel(MPIModel):
         self.batch_size= None
         self.discr_loss_weights = [2, 0.1, 0.1]
 
+        self.with_fixed_disc = True
         self.assemble_models()
         self.recompiled = False
         self.checkpoint = checkpoint
@@ -248,12 +288,12 @@ class GANModel(MPIModel):
 
         image = Input(shape=( 25, 25, 25,1 ), name='image')
 
-        x = Conv3D(32, 5, 5,5,border_mode='same')(image)
+        x = _Conv3D(32, 5, 5,5,border_mode='same')(image)
         x = LeakyReLU()(x)
         x = Dropout(0.2)(x)
         
         x = ZeroPadding3D((2, 2,2))(x)
-        x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
+        x = _Conv3D(8, 5, 5,5,border_mode='valid')(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
         x = Dropout(0.2)(x)
@@ -316,27 +356,25 @@ class GANModel(MPIModel):
     
     def ext_assemble_models(self):
         print('[INFO] Building generator')
-        self.generator = generator(self.latent_size)
+        self.generator = generator(self.latent_size, with_bn = self.gen_bn)
         print('[INFO] Building discriminator')
         self.discriminator = discriminator()
-        self.fixed_discriminator = discriminator(fixed_bn=True)
+        if self.with_fixed_disc:
+            self.fixed_discriminator = discriminator(fixed_bn=True)
         print('[INFO] Building combined')
         #latent = Input(shape=(self.latent_size, ), name='combined_z')
         latent = Input(shape=(self.latent_size, ), name='combined_z')
         fake_image = self.generator(latent)
-        #fake, aux, ecal = self.discriminator(fake_image)
-        fake, aux, ecal = self.fixed_discriminator(fake_image)
-        #self.discriminator.trainable = False        
-        #fake, aux, ecal = self.discriminator( self.generator(latent))
+        if self.with_fixed_disc:
+            fake, aux, ecal = self.fixed_discriminator(fake_image)
+        else:
+            fake, aux, ecal = self.discriminator(fake_image)
+
         self.combined = Model(
             input=[latent],
             output=[fake, aux, ecal],
             name='combined_model'
         )
-
-        #self.combined = Sequential(name='combined_model_seq')
-        #self.combined.add(  self.generator)
-        #self.combined.add( self.discriminator)
 
     def compile(self, **args):
         ## args are fully ignored here 
