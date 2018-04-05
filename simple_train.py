@@ -3,14 +3,35 @@ import h5py
 import setGPU
 import json
 import time
+import optparse
+
+parser = optparse.OptionParser()
+parser.add_option('--restart',action='store_true')
+parser.add_option('--train',action='store_true')
+parser.add_option('--test',action='store_true')
+parser.add_option('--fresh',action='store_true')
+parser.add_option('--tag',default='')
+parser.add_option('--lr',type='float',default=0.0)
+(options,args) = parser.parse_args()
 
 
-gm = GANModel(checkpoint=False)
+gan_args = {
+    'tell': False,
+    'heavycheck' : False,
+    'show_values' : False,
+    'gen_bn' : True,
+    'checkpoint' : False,
+    'onepass' : True,
+    'show_loss' : True,
+    'with_fixed_disc' : True ## could switch back to False and check
+    }
+    
+gm = GANModel(**gan_args)
 
-restart = False
-fresh = True
-tag=''
-lr = None
+restart = options.restart
+fresh = options.fresh
+tag = (options.tag+'_') if options.tag else ''
+lr = options.lr
 
 if restart:
     tag+='reload_'
@@ -47,17 +68,27 @@ print (tag,"is the option")
 
 files = filter(None,open('train_3d.list').read().split('\n'))
 history = {}
+thistory = {}
 etimes=[]
 ftimes={}
 start = time.mktime(time.gmtime())
 
 
-train_me = True
-over_test= True
-max_batch = 10
+train_me = options.train
+over_test= options.test
+max_batch = None
 ibatch=0
+def dump():
+    open('simple_train_%s.json'%tag,'w').write(json.dumps(
+        {
+            'h':history,
+            'th':thistory,
+            'et':etimes,
+            'ft':ftimes
+            } ))    
 for e in range(3): ## epochs
     history[e] = []
+    thistory[e] = []
     ftimes[e] = []
     e_start = time.mktime(time.gmtime())
     if max_batch and ibatch>max_batch:
@@ -73,7 +104,7 @@ for e in range(3): ## epochs
         
         
         N = X.shape[0]
-        bs =200
+        bs =100
         start=0
         end = start+bs
         while end<N:
@@ -82,15 +113,16 @@ for e in range(3): ## epochs
             sub_X = X[start:end]
             sub_Y = [cat[start:end], E[start:end],cellE[start:end]]
             ibatch+=1
-            print (ibatch,ibatch>max_batch,max_batch)
+            #print (ibatch,ibatch>max_batch,max_batch)
             if over_test or not train_me:
                 t_losses = gm.test_on_batch(sub_X,sub_Y)
-                print (t_losses)            
+                t_losses = [list(map(float,l)) for l in t_losses]
+                thistory[e].append( t_losses )
             if train_me:
                 losses = gm.train_on_batch(sub_X,sub_Y)
+                losses = [list(map(float,l)) for l in losses]
+                history[e].append( losses )
 
-            #print (losses)
-            history[e].append( [list(l) for l in losses] )
             start += bs
             end += bs
         gm.generator.save_weights('simple_generator_%s.h5'%tag)
@@ -100,7 +132,7 @@ for e in range(3): ## epochs
         f_stop = time.mktime(time.gmtime())
         print (f_stop - f_start,"[s] for file",f)
         ftimes[e].append( f_stop - f_start )
-        open('simple_train_%s.json'%tag,'w').write(json.dumps( {'h':history,'et':etimes,'ft':ftimes} ))
+        dump()
         if max_batch and ibatch>max_batch:
             break
 
