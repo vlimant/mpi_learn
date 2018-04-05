@@ -1,6 +1,10 @@
 import os
 import glob
-import  h5py
+try:
+    #import h5py
+    pass
+except:
+    print ("hum")
 import numpy as np
 
 def get_data(datafile):
@@ -23,6 +27,9 @@ def get_data(datafile):
     f.close()
     return X, y, ecal
 
+dest='/data/shared/3DGAN/'
+if 'daint' in os.environ['HOST']:
+    dest='/scratch/snx3000/vlimant/3DGAN/'
 
 for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
     _,d,f = F.rsplit('/',2)
@@ -30,7 +37,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
     X = None
     sub_split = 1
     if sub_split==1:
-        nf = '/data/shared/3DGAN/%s_%s.h5'%( d,f)
+        nf = '%s/%s_%s.h5'%( dest,d,f)
         if os.path.isfile( nf) :
             continue
         print ("processing files",F,"into",nf)
@@ -44,7 +51,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
         o['y']['c'] = ecal
     else:
         for sub in range(sub_split):
-            nf = '/data/shared/3DGAN/%s_%s_sub%s.h5'%( d,f,sub)
+            nf = '%s/%s_%s_sub%s.h5'%(dest, d,f,sub)
             if os.path.isfile( nf) :
                 continue
             print ("processing files",F,"into",nf)
@@ -62,11 +69,11 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
             X = None
     o.close()
 
-open('train_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob('/data/shared/3DGAN/*.h5')[:-4])))
-open('test_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob('/data/shared/3DGAN/*.h5')[-4:])))
+open('train_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:-4])))
+open('test_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-4:])))
 
-open('train_small_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob('/data/shared/3DGAN/*.h5')[:-4])))
-open('test_small_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob('/data/shared/3DGAN/*.h5')[-4:])))
+open('train_small_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:-4])))
+open('test_small_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-4:])))
 
-open('train_7_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob('/data/shared/3DGAN/*.h5')[:7])))
-open('test_1_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob('/data/shared/3DGAN/*.h5')[-1:])))
+open('train_7_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:7])))
+open('test_1_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-1:])))
