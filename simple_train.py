@@ -17,6 +17,7 @@ parser.add_option('--lr',type='float',default=0.0)
 
 gan_args = {
     'tell': False,
+    'reversedorder' : False,
     'heavycheck' : False,
     'show_values' : False,
     'gen_bn' : True,
