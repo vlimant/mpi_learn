@@ -605,7 +605,7 @@ class GANModel(MPIModel):
             now = time.mktime(time.gmtime())
             epoch_disc_loss = self.discriminator.train_on_batch(X_for_disc,Y_for_disc)
             if show_loss:
-                print (" discr loss",epoch_disc_loss)
+                print (self.d_cc," discr loss",epoch_disc_loss)
             done = time.mktime(time.gmtime())
             if self.d_cc:
                 self.d_t.append( done - now )
@@ -621,13 +621,13 @@ class GANModel(MPIModel):
                 self.discriminator.trainable = False
             now = time.mktime(time.gmtime())
             if noT:
-                print ("evaluating the comgbined model")
+                print ("evaluating the combined model")
                 epoch_gen_loss = self.combined.test_on_batch(X_for_combined,Y_for_combined)
             else:
                 epoch_gen_loss = self.combined.train_on_batch(X_for_combined,Y_for_combined)
             
             if show_loss:
-                print ("combined loss",epoch_gen_loss)
+                print (self.g_cc,"combined loss",epoch_gen_loss)
             done = time.mktime(time.gmtime())
             if self.g_cc:
                 self.g_t.append( done - now )
@@ -637,11 +637,6 @@ class GANModel(MPIModel):
         if self._reversedorder:
             epoch_gen_loss = _train_comb(noT=(self.g_cc==0))
             _pass = 'C-pass'
-            #if self.g_cc==0:
-            #    _pass = 'C-pass-skipped'## skipped the first time train_on_batch is call to avoid training the generator on purely random discriminator
-            #else:
-            #    epoch_gen_loss = _train_comb()
-            #    _pass = 'C-pass'
         else:                            
             epoch_disc_loss = _train_disc()
             _pass = 'D-pass'    
