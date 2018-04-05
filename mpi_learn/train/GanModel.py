@@ -265,7 +265,7 @@ class GANModel(MPIModel):
         self.assemble_models()
         self.recompiled = False
         self.checkpoint = args.get('checkpoint',True)
-        
+
         if self.tell:
             print ("Generator summary")
             self.generator.summary()
@@ -674,7 +674,9 @@ class GANModel(MPIModel):
             print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
             
         if self.checkpoint:
-            self.generator.save_weights('mpi_generator_%s_%s.h5'%(socket.gethostname(),os.getpid()))
+            dest='%s/mpi_generator_%s_%s.h5'%(os.environ.get('GANCHECKPOINTLOC','.'),socket.gethostname(),os.getpid())
+            print ("Saving generator to",dest)
+            self.generator.save_weights(dest)
             
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
     
