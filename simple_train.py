@@ -3,14 +3,23 @@ import h5py
 import setGPU
 import json
 import time
+import optparse
+
+parser = optparse.OptionParser()
+parser.add_option('--restart',action='store_true')
+parser.add_option('--fresh',action='store_true')
+parser.add_option('--tag',default='')
+parser.add_option('--lr',type='float',default=0.0)
+(options,args) = parser.parse_args()
 
 
-gm = GANModel(checkpoint=False)
+#gm = GANModel(checkpoint=False, gen_bn = False)
+gm = GANModel(checkpoint=False, gen_bn = True)
 
-restart = False
-fresh = True
-tag=''
-lr = None
+restart = options.restart
+fresh = options.fresh
+tag = options.tag
+lr = options.lr
 
 if restart:
     tag+='reload_'
@@ -54,7 +63,7 @@ start = time.mktime(time.gmtime())
 
 train_me = True
 over_test= True
-max_batch = 10
+max_batch = None
 ibatch=0
 for e in range(3): ## epochs
     history[e] = []
@@ -82,7 +91,7 @@ for e in range(3): ## epochs
             sub_X = X[start:end]
             sub_Y = [cat[start:end], E[start:end],cellE[start:end]]
             ibatch+=1
-            print (ibatch,ibatch>max_batch,max_batch)
+            #print (ibatch,ibatch>max_batch,max_batch)
             if over_test or not train_me:
                 t_losses = gm.test_on_batch(sub_X,sub_Y)
                 print (t_losses)            
