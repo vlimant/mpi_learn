@@ -171,7 +171,41 @@ def bit_flip(x, prob=0.05):
     x[selection] = 1 * np.logical_not(x[selection])
     return x
 
+class VSGD(SGD):
+    def __init__(self, **args):
+        SGD.__init__(self,**args)
+    #def get_gradients(self, loss, params):
+    #    g = SGD.get_gradients(self, loss, params)
+    #    #print ([K.get_value(gg) for gg in np.ravel(g)[:10]])
+    #    #v = K.get_value(g)
+    #    #print ([np.ravel(v)[:10]])
+    #    return g
 
+    #def get_updates(self, params, constraints, loss):
+    #    u = SGD.get_updates(self, params, constraints, loss)
+    #
+    #    #print ([K.get_value(uu) for uu in u])
+    #    return u
+        
+    def get_updates(self, params, constraints, loss):
+        grads = self.get_gradients(loss, params)
+        self.updates = []
+        
+        lr = self.lr
+        print ("lr",K.get_value(lr))
+        # momentum
+        shapes = [K.get_variable_shape(p) for p in params]
+        moments = [K.zeros(shape) for shape in shapes]
+        self.weights = [self.iterations] + moments
+        for p, g, m in zip(params, grads, moments):
+            #v = self.momentum * m - lr * g  # velocity
+            v = -1.*lr* g
+            #print (K.get_value(g))
+            self.updates.append(K.update(m, v))
+            new_p = p + v
+            self.updates.append(K.update(p, new_p))
+        return self.updates
+                    
 class GANModel(MPIModel):
     def __init__(self, latent_size=200, checkpoint=True):
         self.tell = True
@@ -186,7 +220,7 @@ class GANModel(MPIModel):
 
         self.assemble_models()
         self.recompiled = False
-        self.checkpoint = True
+        self.checkpoint = checkpoint
         
         if self.tell:
             print ("Generator summary")
