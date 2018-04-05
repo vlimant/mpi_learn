@@ -16,6 +16,7 @@ from keras.optimizers import RMSprop,SGD
 import numpy as np
 import time
 import socket
+import os
 
 import keras.backend as K
 from keras.models import Model, Sequential
@@ -245,22 +246,23 @@ class VSGD(SGD):
         return self.updates
                     
 class GANModel(MPIModel):
-    def __init__(self, latent_size=200, checkpoint=True, gen_bn=True):
-        self.tell = True
-        self.gen_bn = gen_bn
-        self._onepass = False#True
-        self._heavycheck = True
-        self._show_values = False
-        self._show_loss = False
+    def __init__(self, **args):#latent_size=200, checkpoint=True, gen_bn=True, onepass=False):
+        self.tell = args.get('tell',True)
+        self.gen_bn = args.get('gen_bn',True)
+        self._onepass = args.get('onepass',bool(int(os.environ.get('GANONEPASS',0))))
+        self._switchingloss = args.get('switchingloss',False)
+        self._heavycheck = args.get('heavycheck',False)
+        self._show_values = args.get('show_values',False)
+        self._show_loss = args.get('show_loss', True)
         self._show_weights = False
-        self.latent_size=latent_size
-        self.batch_size= None
+        self.latent_size=args.get('latent_size',200)
+        self.batch_size= None ## will be taken from the data that is passed on
         self.discr_loss_weights = [2, 0.1, 0.1]
 
-        self.with_fixed_disc = True
+        self.with_fixed_disc = args.get('with_fixed_disc',True)
         self.assemble_models()
         self.recompiled = False
-        self.checkpoint = checkpoint
+        self.checkpoint = args.get('checkpoint',True)
         
         if self.tell:
             print ("Generator summary")
@@ -269,7 +271,15 @@ class GANModel(MPIModel):
             self.discriminator.summary()
             print ("Combined summary")
             self.combined.summary()
-        
+        if True:
+            if self.with_fixed_disc: print ("the batch norm weights are fixed. heavey weight re-assigning")
+            if self.checkpoint: print ("Checkpointing the model weigths at each batch, based on the process id")
+            if self._onepass: print ("Training in one pass")
+            if self._heavycheck: print("running heavy check on weight sanity")
+            if self._show_values: print("showing the input values at each batch")
+            if self._show_loss: print("showing the loss at each batch")
+            if self._show_weights: print("showing weights statistics at each batch")
+            
         MPIModel.__init__(self, models = [
             self.discriminator,
             self.generator
@@ -382,7 +392,21 @@ class GANModel(MPIModel):
 
         def make_opt(**args):
             lr = args.get('lr',0.0001)
-            prop = args.get('prop',True)
+            prop = args.get('prop',True) ## gets as the default
+            
+            oo = args.get('optimizer',None) ## through mpi-learn
+            if type(oo) == SGD or oo == 'sgd':
+                print ('was specified as an SGD by mpi-learn')
+                lr = K.get_value(oo.lr)
+                #lr = oo.lr
+                print ('using %s'%lr)
+                prop = False
+            elif type(oo) == RMSprop or oo == 'rmsprop':
+                print ('was specfiice as an RMSprop by mpi-learn')
+                prop = True
+            else:
+                print ("not supported %s"%(oo))
+
             if prop:
                 opt = RMSprop()
             else:
@@ -523,6 +547,9 @@ class GANModel(MPIModel):
             (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined) = self.batch_transform(x,y)
             epoch_disc_loss = self.discriminator.test_on_batch(X_for_disc,Y_for_disc)
             epoch_gen_loss = self.combined.test_on_batch(X_for_combined,Y_for_combined)
+            if show_loss:
+                print ("test discr loss",epoch_disc_loss)
+                print ("test combined loss",epoch_gen_loss)
         else:
             ((x_disc_real,re_y),(generated_images, y_disc_fake),(x_comb1,y_comb1),(x_comb2,y_comb2)) = self.batch_transform(x,y)
             real_disc_loss = self.discriminator.test_on_batch( x_disc_real,re_y )
@@ -541,29 +568,6 @@ class GANModel(MPIModel):
         
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
-    def _onepass_train_on_batch(self, x, y,
-                   sample_weight=None,
-                   class_weight=None):
-
-        (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined) = self.batch_transform(x,y)
-        if self.d_cc>1 and len(self.d_t)%100==0:
-            print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
-        now = time.mktime(time.gmtime())
-        epoch_disc_loss = self.discriminator.train_on_batch(X_for_disc,Y_for_disc)
-        done = time.mktime(time.gmtime())
-        if self.d_cc:
-            self.d_t.append( done - now )
-        self.d_cc+=1
-        if self.g_cc>1 and len(self.g_t)%100==0:
-            print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
-        now = time.mktime(time.gmtime())
-        epoch_gen_loss = self.combined.train_on_batch(X_for_combined,Y_for_combined)
-        done = time.mktime(time.gmtime())
-        if self.g_cc:
-            self.g_t.append( done - now )
-            
-        return np.asarray([epoch_disc_loss, epoch_gen_loss])
-    
     def train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
@@ -575,6 +579,69 @@ class GANModel(MPIModel):
                 return self._twopass_train_on_batch(x,y,sample_weight,class_weight)
 
         
+
+    def _onepass_train_on_batch(self, x, y,
+                   sample_weight=None,
+                   class_weight=None):
+        
+        show_weights = self._show_weights
+        show_loss = self._show_loss
+        (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined) = self.batch_transform(x,y)
+        if self.d_cc>1 and len(self.d_t)%100==0:
+            print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
+
+
+        if self._heavycheck:
+            on_weight = self.combined
+            check_on_weight = on_weight.get_weights()
+            if self._show_weights:
+                weights( on_weight )
+            weights_diff( on_weight , init=True)
+            
+        now = time.mktime(time.gmtime())
+        epoch_disc_loss = self.discriminator.train_on_batch(X_for_disc,Y_for_disc)
+        if show_loss:
+            print (" discr loss",epoch_disc_loss)
+        done = time.mktime(time.gmtime())
+        if self.d_cc:
+            self.d_t.append( done - now )
+        self.d_cc+=1
+
+        if hasattr(self,'fixed_discriminator'):
+            ## pass things over
+            self.fixed_discriminator.set_weights( self.discriminator.get_weights())
+            self.fixed_discriminator.trainable = False
+        else:
+            self.discriminator.trainable = False
+
+        if self._heavycheck:
+            if show_weights: weights( on_weight )
+            weights_diff( on_weight , label='D-pass')
+            
+        if self.g_cc>1 and len(self.g_t)%100==0:
+            print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
+        now = time.mktime(time.gmtime())
+        epoch_gen_loss = self.combined.train_on_batch(X_for_combined,Y_for_combined)
+        if show_loss:
+            print ("combined loss",epoch_gen_loss)
+        done = time.mktime(time.gmtime())
+        if self.g_cc:
+            self.g_t.append( done - now )
+
+        if self._heavycheck:
+            if show_weights: weights( on_weight )
+            weights_diff( on_weight , label='C-pass')
+            
+        if show_weights:
+            weights( self.discriminator )
+            weights( self.generator )
+            weights( self.combined )
+
+        if self.checkpoint:
+            self.generator.save_weights('mpi_generator_%s_%s.h5'%(socket.gethostname(),os.getpid()))
+            
+        return np.asarray([epoch_disc_loss, epoch_gen_loss])
+    
     def _twopass_train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
@@ -600,9 +667,10 @@ class GANModel(MPIModel):
         
         now = time.mktime(time.gmtime())
         real_batch_loss = self.discriminator.train_on_batch(x_disc_real,re_y)
-        if hasattr(self,'fixed_discriminator'):
-            self.fixed_discriminator.set_weights( self.discriminator.get_weights())
+
         if self._heavycheck:
+            if hasattr(self,'fixed_discriminator'):
+                self.fixed_discriminator.set_weights( self.discriminator.get_weights())
             if show_weights: weights( on_weight )
             weights_diff( on_weight , label='D-real')
         
@@ -623,24 +691,16 @@ class GANModel(MPIModel):
         if show_loss:
             #print (self.discriminator.metrics_names)
             print (self.d_cc,"discr loss",real_batch_loss,fake_batch_loss)
-        epoch_disc_loss = [(a + b) / 2 for a, b in zip(real_batch_loss, fake_batch_loss)]
+        epoch_disc_loss = np.asarray([(a + b) / 2 for a, b in zip(real_batch_loss, fake_batch_loss)])
         done = time.mktime(time.gmtime())
         if self.d_cc:
             self.d_t.append( done - now )
         self.d_cc+=1
 
         if show_weights:
-            #print ("Disc",np.ravel(self.discriminator.get_weights()[1])[:10])
-            #print ("Gen",np.ravel(self.generator.get_weights()[0])[:10])
-            #print ("Comb",np.ravel(self.combined.get_weights()[0])[:10])
             weights( self.discriminator )
             weights( self.generator )
             weights( self.combined )
-            
-
-
-
-            #print ("Right",np.ravel(check_on_weight[1])[:10])
 
         if self.g_cc>1 and len(self.g_t)%100==0:
             print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
@@ -663,7 +723,7 @@ class GANModel(MPIModel):
         if show_loss:
             #print(self.combined.metrics_names)
             print (self.g_cc,"combined loss",c_loss1,c_loss2)
-        epoch_gen_loss = [(a + b) / 2 for a, b in zip(c_loss1,c_loss2)]
+        epoch_gen_loss = np.asarray([(a + b) / 2 for a, b in zip(c_loss1,c_loss2)])
         done = time.mktime(time.gmtime())
         if self.g_cc:
             self.g_t.append( done - now )
@@ -699,19 +759,36 @@ class GANModel(MPIModel):
             self.generator.save_weights('mpi_generator_%s.h5'%(os.getpid()))
 
         ## modify learning rate
-        #switching_loss = (5.,5.)
-        switching_loss = (1.,1.)
-        if not self.recompiled and epoch_disc_loss[0]<switching_loss[0] and epoch_gen_loss[0]<switching_loss[1]:
-            ## go on
-            print ("going for full sgd")
-            self.recompiled = True            
-            self.compile( prop=False, lr=1.0)
-            #K.set_value( self.discriminator.optimizer.lr, 1.0)
-            #K.set_value( self.generator.optimizer.lr, 1.0)
+        if self._switchingloss:
+            switching_loss = (1.,1.)
+            if False and not self.recompiled and epoch_disc_loss[0]<switching_loss[0] and epoch_gen_loss[0]<switching_loss[1]:
+                ## go on
+                print ("going for full sgd")
+                self.recompiled = True            
+                self.compile( prop=False, lr=1.0)
+                #K.set_value( self.discriminator.optimizer.lr, 1.0)
+                #K.set_value( self.generator.optimizer.lr, 1.0)
 
-            
-        print (K.get_value(self.discriminator.optimizer.lr))
-        #print (self.discriminator.optimizer.clipvalue)
+            lr = K.get_value(self.discriminator.optimizer.lr)
+            nlr = lr
+            ths = [
+                #(5.5, 1.0),
+                #(10., 0.1),
+                (1000., 0.01),
+                (10000., 0.001) ,
+            ]
+            for th in sorted(ths, key = lambda o : o[0]):
+                if epoch_disc_loss[0] < th[0]:
+                    nlr = th[1]
+                    break
+            if abs(nlr-lr)/lr > 0.0001:
+                print ("#"*30)
+                print ("swithcing lr",lr,"to", nlr)
+                K.set_value( self.discriminator.optimizer.lr, nlr)
+                print (K.get_value( self.discriminator.optimizer.lr ))
+                K.set_value( self.combined.optimizer.lr, nlr)
+                print (K.get_value( self.combined.optimizer.lr ))
+                print ("#"*30)
         
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
     
