@@ -45,10 +45,10 @@ def weights(m):
     for ii,dd in enumerate(_disp):
         print (ii,dd)
 
-def weights_diff( m ,lap=True, init=False,label='', alert=1000.):
+def weights_diff( m ,lap=True, init=False,label='', alert=None):#1000.):
     if (weights_diff.old_weights is None) or init:
         weights_diff.old_weights = m.get_weights()
-        return 
+        return
     _weights_names = []
     for layer in m.layers:
         _weights_names += [ll.name for ll in layer.weights]
@@ -68,7 +68,7 @@ def weights_diff( m ,lap=True, init=False,label='', alert=1000.):
         #    print ("\t",_diffs[ii])
     if lap:
         weights_diff.old_weights = m.get_weights()
-        
+
 weights_diff.old_weights = None
 
 def _Conv3D(N,a,b,c,**args):
@@ -81,11 +81,16 @@ def _Conv3D(N,a,b,c,**args):
         return Conv3D(N, a,b,c, **args)
 def _BatchNormalization(**args):
     if kv2:
+        m=0
         if 'mode' in args:
             m=args.pop('mode')
-        args['scale'] = False
-        args['center'] = False
-        return BatchNormalization(**args)
+        if m==2:
+            return StaticBatchNormalization(**args)
+            #return BatchNormalization(**args)
+        else:
+            #args['scale'] = False
+            #args['center'] = False
+            return BatchNormalization(**args)
     else:
         return BatchNormalization(**args)
 
@@ -104,7 +109,7 @@ def _Model(**args):
     else:
         return Model(**args)
 def discriminator(fixed_bn = False):
-    
+
     image = Input(shape=( 25, 25, 25,1 ), name='image')
 
     bnm=2 if fixed_bn else 0
@@ -225,11 +230,11 @@ class VSGD(SGD):
     #
     #    #print ([K.get_value(uu) for uu in u])
     #    return u
-        
+
     def get_updates(self, params, constraints, loss):
         grads = self.get_gradients(loss, params)
         self.updates = []
-        
+
         lr = self.lr
         print ("lr",K.get_value(lr))
         # momentum
@@ -244,7 +249,11 @@ class VSGD(SGD):
             new_p = p + v
             self.updates.append(K.update(p, new_p))
         return self.updates
-                    
+
+class StaticBatchNormalization(BatchNormalization):
+    def call(self, inputs, training=None):
+        return super(StaticBatchNormalization, self).call(inputs, training=False)
+
 class GANModel(MPIModel):
     def __init__(self, **args):#latent_size=200, checkpoint=True, gen_bn=True, onepass=False):
         self.tell = args.get('tell',True)
@@ -282,12 +291,14 @@ class GANModel(MPIModel):
             if self._show_values: print("showing the input values at each batch")
             if self._show_loss: print("showing the loss at each batch")
             if self._show_weights: print("showing weights statistics at each batch")
-            
+
         MPIModel.__init__(self, models = [
             self.discriminator,
-            self.generator
+            #self.generator
+            self.combined ## this is increasing a bit the amount of com by sending twice the discriminator
         ])
 
+        
         ## counters
         self.g_cc = 0
         self.d_cc = 0
@@ -296,7 +307,7 @@ class GANModel(MPIModel):
         self.d_t = []
         self.p_t = []
 
-        
+
     def big_assemble_models(self):
 
         image = Input(shape=( 25, 25, 25,1 ), name='image')
@@ -304,32 +315,32 @@ class GANModel(MPIModel):
         x = _Conv3D(32, 5, 5,5,border_mode='same')(image)
         x = LeakyReLU()(x)
         x = Dropout(0.2)(x)
-        
+
         x = ZeroPadding3D((2, 2,2))(x)
         x = _Conv3D(8, 5, 5,5,border_mode='valid')(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
         x = Dropout(0.2)(x)
-        
+
         x = ZeroPadding3D((2, 2, 2))(x)
         x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
         x = Dropout(0.2)(x)
-        
+
         x = ZeroPadding3D((1, 1, 1))(x)
         x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
         x = Dropout(0.2)(x)
-        
+
         x = AveragePooling3D((2, 2, 2))(x)
         h = Flatten()(x)
-        
+
 
         fake = Dense(1, activation='sigmoid', name='generation')(h)
         aux = Dense(1, activation='linear', name='auxiliary')(h)
-        ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)))(image)        
+        ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)))(image)
 
         self.discriminator = Model(output=[fake, aux, ecal], input=image, name='discriminator_model')
 
@@ -347,26 +358,26 @@ class GANModel(MPIModel):
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
         x = UpSampling3D(size=(2, 2, 3))(x)
-        
+
         x = ZeroPadding3D((1,0,3))(x)
         x = Conv3D(6, 3, 3, 8, init='he_uniform')(x)
         x = LeakyReLU()(x)
-        
+
         x = Conv3D(1, 2, 2, 2, bias=False, init='glorot_normal')(x)
         x = Activation('relu')(x)
-        
+
         loc = Model(latent, x)
         #fake_image = loc(latent)
         self.generator = Model(input=latent, output=x, name='generator_model')
-        
+
         c_fake, c_aux, c_ecal = self.discriminator(x)
         self.combined = Model(
             input = latent,
             output = [c_fake, c_aux, c_ecal],
             name='combined_model'
             )
-         
-    
+
+
     def ext_assemble_models(self):
         print('[INFO] Building generator')
         self.generator = generator(self.latent_size, with_bn = self.gen_bn)
@@ -390,13 +401,13 @@ class GANModel(MPIModel):
         )
 
     def compile(self, **args):
-        ## args are fully ignored here 
-        print('[INFO] IN GAN MODEL: COMPILE')       
+        ## args are fully ignored here
+        print('[INFO] IN GAN MODEL: COMPILE')
 
         def make_opt(**args):
             lr = args.get('lr',0.0001)
             prop = args.get('prop',True) ## gets as the default
-            
+
             oo = args.get('optimizer',None) ## through mpi-learn
             if type(oo) == SGD or oo == 'sgd':
                 print ('was specified as an SGD by mpi-learn')
@@ -414,20 +425,20 @@ class GANModel(MPIModel):
                 opt = RMSprop()
             else:
                 opt = SGD(lr=lr,
-                #opt = VSGD(lr=lr,                          
+                #opt = VSGD(lr=lr,
                           #clipnorm = 1000.,
                            clipvalue = 1000.,
                 )
 
             print ("optimizer for compiling",opt)
             return opt
-        
+
         self.generator.compile(
             optimizer=make_opt(**args),
             loss='binary_crossentropy') ## never  actually used for training
-        
+
         self.discriminator.compile(
-            optimizer=make_opt(**args),            
+            optimizer=make_opt(**args),
             loss=['binary_crossentropy', 'mean_absolute_percentage_error', 'mean_absolute_percentage_error'],
             loss_weights=self.discr_loss_weights
         )
@@ -436,18 +447,18 @@ class GANModel(MPIModel):
             self.fixed_discriminator.trainable = False
         else:
             self.discriminator.trainable = False
-        
+
         self.combined.compile(
             optimizer=make_opt(**args),
             loss=['binary_crossentropy', 'mean_absolute_percentage_error', 'mean_absolute_percentage_error'],
             loss_weights=self.discr_loss_weights
-        ) 
+        )
 
         print ("compiled")
 
     def assemble_models(self):
         self.ext_assemble_models()
-        
+
     def batch_transform(self, x, y):
         root_fit = [0.0018, -0.023, 0.11, -0.28, 2.21]
         x_disc_real =x
@@ -455,7 +466,7 @@ class GANModel(MPIModel):
         show_values = self._show_values
         def mm( label, t):
             print (label,np.min(t),np.max(t),np.mean(t),np.std(t),t.shape)
-        
+
         if self.batch_size is None:
             ## fix me, maybe
             self.batch_size = x_disc_real.shape[0]
@@ -473,7 +484,7 @@ class GANModel(MPIModel):
         ecal_ip = np.multiply(ratio, sampled_energies)
         #if show_values: print ('estimated sum cells',np.ravel(ecal_ip)[:10])
         if show_values: mm('estimated sum cells',ecal_ip)
-        
+
         now = time.mktime(time.gmtime())
         if self.p_cc>1 and len(self.p_t)%100==0:
             print ("prediction average",np.mean(self.p_t),"[s]' over",len(self.p_t))
@@ -484,7 +495,7 @@ class GANModel(MPIModel):
 
         norm_overflow = False
         apply_identify = False ## False was intended originally
-        
+
         if norm_overflow and np.max( ecal_rip ) > 1000.:
             if show_values: print ("normalizing back")
             #ecal_ip = ecal_rip
@@ -494,7 +505,7 @@ class GANModel(MPIModel):
             if show_values: mm('generated sum cells',ecal_rip)
         elif apply_identify:
             ecal_ip = ecal_rip
-            
+
         done = time.mktime(time.gmtime())
         if self.p_cc:
             self.p_t.append( done - now )
@@ -516,8 +527,8 @@ class GANModel(MPIModel):
             np.random.set_state(rng_state)
             np.random.shuffle( bb_y[1] )
             np.random.set_state(rng_state)
-            np.random.shuffle( bb_y[2] )        
-        
+            np.random.shuffle( bb_y[2] )
+
             X_for_disc = bb_x
             Y_for_disc = bb_y
 
@@ -529,7 +540,7 @@ class GANModel(MPIModel):
         c_generator_ip = np.multiply(c_sampled_energies, c_noise)
         c_ratio = np.polyval(root_fit, c_sampled_energies)
         c_ecal_ip = np.multiply(c_ratio, c_sampled_energies)
-        c_trick = np.ones(2*self.batch_size)        
+        c_trick = np.ones(2*self.batch_size)
 
         X_for_combined = [c_generator_ip]
         Y_for_combined = [c_trick,c_sampled_energies.reshape((-1, 1)), c_ecal_ip]
@@ -540,7 +551,7 @@ class GANModel(MPIModel):
             def head(a):
                 return [o[:self.batch_size] for o in a]
             def tail(a):
-                return [o[self.batch_size:] for o in a]            
+                return [o[self.batch_size:] for o in a]
 
             return ((x_disc_real,re_y),(generated_images,y_disc_fake), (head(X_for_combined),head(Y_for_combined)), (tail(X_for_combined),tail(Y_for_combined)))
 
@@ -566,9 +577,9 @@ class GANModel(MPIModel):
                 print ("test discr loss",real_disc_loss,fake_disc_loss)
                 print ("test combined loss",c_loss1, c_loss2)
 
-            
 
-        
+
+
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
     def train_on_batch(self, x, y,
@@ -581,12 +592,12 @@ class GANModel(MPIModel):
             else:
                 return self._twopass_train_on_batch(x,y,sample_weight,class_weight)
 
-        
+
 
     def _onepass_train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
-        
+
         show_weights = self._show_weights
         show_loss = self._show_loss
         (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined) = self.batch_transform(x,y)
@@ -625,7 +636,7 @@ class GANModel(MPIModel):
                 epoch_gen_loss = self.combined.test_on_batch(X_for_combined,Y_for_combined)
             else:
                 epoch_gen_loss = self.combined.train_on_batch(X_for_combined,Y_for_combined)
-            
+
             if show_loss:
                 print (self.g_cc,"combined loss",epoch_gen_loss)
             done = time.mktime(time.gmtime())
@@ -637,9 +648,9 @@ class GANModel(MPIModel):
         if self._reversedorder:
             epoch_gen_loss = _train_comb(noT=(self.g_cc==0))
             _pass = 'C-pass'
-        else:                            
+        else:
             epoch_disc_loss = _train_disc()
-            _pass = 'D-pass'    
+            _pass = 'D-pass'
 
         if self._heavycheck:
             if show_weights: weights( on_weight )
@@ -651,11 +662,11 @@ class GANModel(MPIModel):
         else:
             epoch_gen_loss = _train_comb()
             _pass = 'C-pass'
-            
+
         if self._heavycheck:
             if show_weights: weights( on_weight )
             weights_diff( on_weight , label=_pass)
-            
+
         if show_weights:
             weights( self.discriminator )
             weights( self.generator )
@@ -664,17 +675,17 @@ class GANModel(MPIModel):
 
         if len(self.g_t)>0 and len(self.g_t)%100==0:
             print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
-        
+
         if len(self.d_t)>0 and len(self.d_t)%100==0:
             print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
-            
+
         if self.checkpoint:
             dest='%s/mpi_generator_%s_%s.h5'%(os.environ.get('GANCHECKPOINTLOC','.'),socket.gethostname(),os.getpid())
             print ("Saving generator to",dest)
             self.generator.save_weights(dest)
-            
+
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
-    
+
     def _twopass_train_on_batch(self, x, y,
                    sample_weight=None,
                    class_weight=None):
@@ -697,7 +708,7 @@ class GANModel(MPIModel):
             if self._show_weights:
                 weights( on_weight )
             weights_diff( on_weight , init=True)
-        
+
         now = time.mktime(time.gmtime())
         real_batch_loss = self.discriminator.train_on_batch(x_disc_real,re_y)
 
@@ -706,7 +717,7 @@ class GANModel(MPIModel):
                 self.fixed_discriminator.set_weights( self.discriminator.get_weights())
             if show_weights: weights( on_weight )
             weights_diff( on_weight , label='D-real')
-        
+
         fake_batch_loss = self.discriminator.train_on_batch(generated_images, y_disc_fake)
 
         if hasattr(self,'fixed_discriminator'):
@@ -715,12 +726,12 @@ class GANModel(MPIModel):
             self.fixed_discriminator.trainable = False
         else:
             self.discriminator.trainable = False
-            
+
         if self._heavycheck:
             if show_weights: weights( on_weight )
             weights_diff( on_weight , label='D-fake')
 
-            
+
         if show_loss:
             #print (self.discriminator.metrics_names)
             print (self.d_cc,"discr loss",real_batch_loss,fake_batch_loss)
@@ -746,13 +757,13 @@ class GANModel(MPIModel):
         c_loss1= self.combined.train_on_batch( x_comb1,y_comb1)
         if self._heavycheck:
             if show_weights: weights( on_weight )
-            weights_diff( on_weight , label ='C-1')        
+            weights_diff( on_weight , label ='C-1')
         c_loss2= self.combined.train_on_batch( x_comb2,y_comb2)
         #c_loss2= c_loss1
         if self._heavycheck:
             if show_weights: weights( on_weight )
             weights_diff( on_weight , label='C-2')
-            
+
         if show_loss:
             #print(self.combined.metrics_names)
             print (self.g_cc,"combined loss",c_loss1,c_loss2)
@@ -764,7 +775,7 @@ class GANModel(MPIModel):
 
         if self._heavycheck:
             and_check_on_weight = on_weight.get_weights()
-            
+
             ## this contains a boolean whether all values of the tensors are equal :
             # [--, False, --] ===> weights have changed for one layer
             # [--, True, --] ===> weights are the same one layer
@@ -788,7 +799,7 @@ class GANModel(MPIModel):
         ## checkpoints the models each time
 
         if self.checkpoint:
-            import os            
+            import os
             self.generator.save_weights('mpi_generator_%s.h5'%(os.getpid()))
 
         ## modify learning rate
@@ -797,7 +808,7 @@ class GANModel(MPIModel):
             if False and not self.recompiled and epoch_disc_loss[0]<switching_loss[0] and epoch_gen_loss[0]<switching_loss[1]:
                 ## go on
                 print ("going for full sgd")
-                self.recompiled = True            
+                self.recompiled = True
                 self.compile( prop=False, lr=1.0)
                 #K.set_value( self.discriminator.optimizer.lr, 1.0)
                 #K.set_value( self.generator.optimizer.lr, 1.0)
@@ -822,9 +833,9 @@ class GANModel(MPIModel):
                 K.set_value( self.combined.optimizer.lr, nlr)
                 print (K.get_value( self.combined.optimizer.lr ))
                 print ("#"*30)
-        
+
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
-    
+
 
 """
         ## the rest is legacy
@@ -832,11 +843,11 @@ class GANModel(MPIModel):
         x_disc_real =x
         y_disc_real = y
         if self.batch_size is None:
-            ## fix me, maybe 
+            ## fix me, maybe
             self.batch_size = x_disc_real.shape[0]
             print ("In train_on_batch: initializing sizes",x_disc_real.shape,[ yy.shape for yy in y])
-            
-            
+
+
         noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
         sampled_energies = np.random.uniform(0.1, 5,(self.batch_size,1))
         generator_ip = np.multiply(sampled_energies, noise)
@@ -850,21 +861,21 @@ class GANModel(MPIModel):
         if self.p_cc:
             self.p_t.append( done - now )
         self.p_cc +=1
-        
+
         ## need to bit flip the true labels too
         bf = bit_flip(y[0])
         y_disc_fake = [bit_flip(np.zeros(self.batch_size)), sampled_energies.reshape((-1,)), ecal_ip.reshape((-1,))]
         re_y = [bf, y_disc_real[1], y_disc_real[2]]
         #print ("got",[yy.shape for yy in re_y])
         #print ("got",[yy.shape for yy in y_disc_fake])
-        
+
         two_pass = True
         #print ("calling discr",self.d_cc)
         if self.d_cc>1 and len(self.d_t)%100==0:
             print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
         now = time.mktime(time.gmtime())
         if two_pass:
-      
+
             #real_batch_loss = self.discriminator.train_on_batch(x_disc_real, y_disc_real)
             real_batch_loss = self.discriminator.train_on_batch(x_disc_real,re_y)
             fake_batch_loss = self.discriminator.train_on_batch(generated_images, y_disc_fake)
@@ -898,14 +909,14 @@ class GANModel(MPIModel):
         now = time.mktime(time.gmtime())
         if two_pass:
             gen_losses = []
-            trick = np.ones(self.batch_size)        
+            trick = np.ones(self.batch_size)
             for _ in range(2):
                 noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
                 sampled_energies = np.random.uniform(0.1, 5, ( self.batch_size,1 ))
                 generator_ip = np.multiply(sampled_energies, noise)
                 ratio = np.polyval(root_fit, sampled_energies)
                 ecal_ip = np.multiply(ratio, sampled_energies)
-                
+
                 gen_losses.append(self.combined.train_on_batch(
                     [generator_ip],
                     [trick, sampled_energies.reshape((-1, 1)), ecal_ip]))
@@ -924,13 +935,13 @@ class GANModel(MPIModel):
                 [generator_ip],
                 [trick,sampled_energies.reshape((-1, 1)), ecal_ip])
 
-            
-        
+
+
         done = time.mktime(time.gmtime())
         if self.g_cc:
             self.g_t.append( done - now )
         self.g_cc+=1
-        
+
         #self.epoch_disc_loss.extend( epoch_disc_loss )
         #self.epoch_gen_loss.extend( epoch_gen_loss )
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
@@ -942,7 +953,7 @@ class GANModelBuilder(ModelBuilder):
         ModelBuilder.__init__(self, c)
         self.tf = tf
         self.device = self.get_device_name(device_name) if self.tf else None
-        
+
     def build_model(self):
         if self.tf:
             ## I have to declare the device explictely
@@ -953,7 +964,7 @@ class GANModelBuilder(ModelBuilder):
         else:
             m = GANModel()
             return m
-            
+
     def get_device_name(self, device):
         """Returns a TF-style device identifier for the specified device.
             input: 'cpu' for CPU and 'gpuN' for the Nth GPU on the host"""
