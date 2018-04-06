@@ -591,8 +591,11 @@ class GANModel(MPIModel):
                 return self._onepass_train_on_batch(x,y,sample_weight,class_weight)
             else:
                 return self._twopass_train_on_batch(x,y,sample_weight,class_weight)
-
-
+    def _checkpoint(self):
+        if self.checkpoint:
+            dest='%s/mpi_generator_%s_%s.h5'%(os.environ.get('GANCHECKPOINTLOC','.'),socket.gethostname(),os.getpid())
+            print ("Saving generator to",dest)
+            self.generator.save_weights(dest)        
 
     def _onepass_train_on_batch(self, x, y,
                    sample_weight=None,
@@ -679,10 +682,7 @@ class GANModel(MPIModel):
         if len(self.d_t)>0 and len(self.d_t)%100==0:
             print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
 
-        if self.checkpoint:
-            dest='%s/mpi_generator_%s_%s.h5'%(os.environ.get('GANCHECKPOINTLOC','.'),socket.gethostname(),os.getpid())
-            print ("Saving generator to",dest)
-            self.generator.save_weights(dest)
+        self._checkpoint()
 
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
@@ -796,11 +796,7 @@ class GANModel(MPIModel):
                     print (np.ravel(and_check_on_weight[1])[:10])
                     print (np.ravel(check_on_weight[1])[:10])
 
-        ## checkpoints the models each time
-
-        if self.checkpoint:
-            import os
-            self.generator.save_weights('mpi_generator_%s.h5'%(os.getpid()))
+        self._checkpoint()
 
         ## modify learning rate
         if self._switchingloss:
