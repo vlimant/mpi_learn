@@ -250,11 +250,13 @@ class GANModel(MPIModel):
         self.tell = args.get('tell',True)
         self.gen_bn = args.get('gen_bn',True)
         self._onepass = args.get('onepass',bool(int(os.environ.get('GANONEPASS',0))))
+        self._reversedorder = args.get('reversedorder',bool(int(os.environ.get('GANREVERSED',0))))
         self._switchingloss = args.get('switchingloss',False)
         self._heavycheck = args.get('heavycheck',False)
         self._show_values = args.get('show_values',False)
         self._show_loss = args.get('show_loss', True)
         self._show_weights = False
+
         self.latent_size=args.get('latent_size',200)
         self.batch_size= None ## will be taken from the data that is passed on
         self.discr_loss_weights = [2, 0.1, 0.1]
@@ -263,7 +265,7 @@ class GANModel(MPIModel):
         self.assemble_models()
         self.recompiled = False
         self.checkpoint = args.get('checkpoint',True)
-        
+
         if self.tell:
             print ("Generator summary")
             self.generator.summary()
@@ -275,6 +277,7 @@ class GANModel(MPIModel):
             if self.with_fixed_disc: print ("the batch norm weights are fixed. heavey weight re-assigning")
             if self.checkpoint: print ("Checkpointing the model weigths at each batch, based on the process id")
             if self._onepass: print ("Training in one pass")
+            if self._reversedorder: print ("will train generator first, then discriminator")
             if self._heavycheck: print("running heavy check on weight sanity")
             if self._show_values: print("showing the input values at each batch")
             if self._show_loss: print("showing the loss at each batch")
@@ -587,8 +590,6 @@ class GANModel(MPIModel):
         show_weights = self._show_weights
         show_loss = self._show_loss
         (X_for_disc,Y_for_disc,X_for_combined,Y_for_combined) = self.batch_transform(x,y)
-        if self.d_cc>1 and len(self.d_t)%100==0:
-            print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
 
 
         if self._heavycheck:
@@ -597,48 +598,80 @@ class GANModel(MPIModel):
             if self._show_weights:
                 weights( on_weight )
             weights_diff( on_weight , init=True)
-            
-        now = time.mktime(time.gmtime())
-        epoch_disc_loss = self.discriminator.train_on_batch(X_for_disc,Y_for_disc)
-        if show_loss:
-            print (" discr loss",epoch_disc_loss)
-        done = time.mktime(time.gmtime())
-        if self.d_cc:
-            self.d_t.append( done - now )
-        self.d_cc+=1
 
-        if hasattr(self,'fixed_discriminator'):
-            ## pass things over
-            self.fixed_discriminator.set_weights( self.discriminator.get_weights())
-            self.fixed_discriminator.trainable = False
+
+        def _train_disc():
+            self.discriminator.trainable = True
+            now = time.mktime(time.gmtime())
+            epoch_disc_loss = self.discriminator.train_on_batch(X_for_disc,Y_for_disc)
+            if show_loss:
+                print (self.d_cc," discr loss",epoch_disc_loss)
+            done = time.mktime(time.gmtime())
+            if self.d_cc:
+                self.d_t.append( done - now )
+            self.d_cc+=1
+            if hasattr(self,'fixed_discriminator'):
+                self.fixed_discriminator.set_weights( self.discriminator.get_weights())
+            return epoch_disc_loss
+
+        def _train_comb(noT=False):
+            if hasattr(self,'fixed_discriminator'):
+                self.fixed_discriminator.trainable = False
+            else:
+                self.discriminator.trainable = False
+            now = time.mktime(time.gmtime())
+            if noT:
+                print ("evaluating the combined model")
+                epoch_gen_loss = self.combined.test_on_batch(X_for_combined,Y_for_combined)
+            else:
+                epoch_gen_loss = self.combined.train_on_batch(X_for_combined,Y_for_combined)
+            
+            if show_loss:
+                print (self.g_cc,"combined loss",epoch_gen_loss)
+            done = time.mktime(time.gmtime())
+            if self.g_cc:
+                self.g_t.append( done - now )
+            self.g_cc+=1
+            return epoch_gen_loss
+
+        if self._reversedorder:
+            epoch_gen_loss = _train_comb(noT=(self.g_cc==0))
+            _pass = 'C-pass'
+        else:                            
+            epoch_disc_loss = _train_disc()
+            _pass = 'D-pass'    
+
+        if self._heavycheck:
+            if show_weights: weights( on_weight )
+            weights_diff( on_weight , label=_pass)
+
+        if self._reversedorder:
+            epoch_disc_loss = _train_disc()
+            _pass = 'D-pass'
         else:
-            self.discriminator.trainable = False
-
-        if self._heavycheck:
-            if show_weights: weights( on_weight )
-            weights_diff( on_weight , label='D-pass')
+            epoch_gen_loss = _train_comb()
+            _pass = 'C-pass'
             
-        if self.g_cc>1 and len(self.g_t)%100==0:
-            print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
-        now = time.mktime(time.gmtime())
-        epoch_gen_loss = self.combined.train_on_batch(X_for_combined,Y_for_combined)
-        if show_loss:
-            print ("combined loss",epoch_gen_loss)
-        done = time.mktime(time.gmtime())
-        if self.g_cc:
-            self.g_t.append( done - now )
-
         if self._heavycheck:
             if show_weights: weights( on_weight )
-            weights_diff( on_weight , label='C-pass')
+            weights_diff( on_weight , label=_pass)
             
         if show_weights:
             weights( self.discriminator )
             weights( self.generator )
             weights( self.combined )
 
+
+        if len(self.g_t)>0 and len(self.g_t)%100==0:
+            print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
+        
+        if len(self.d_t)>0 and len(self.d_t)%100==0:
+            print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
+            
         if self.checkpoint:
-            self.generator.save_weights('mpi_generator_%s_%s.h5'%(socket.gethostname(),os.getpid()))
+            dest='%s/mpi_generator_%s_%s.h5'%(os.environ.get('GANCHECKPOINTLOC','.'),socket.gethostname(),os.getpid())
+            print ("Saving generator to",dest)
+            self.generator.save_weights(dest)
             
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
     
