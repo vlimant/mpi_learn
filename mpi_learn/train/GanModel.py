@@ -273,7 +273,7 @@ class GANModel(MPIModel):
         self.with_fixed_disc = args.get('with_fixed_disc',True)
         self.assemble_models()
         self.recompiled = False
-        self.checkpoint = args.get('checkpoint',True)
+        self.checkpoint = args.get('checkpoint',int(os.environ.get('GANCHECKPOINT',0)))
 
         if self.tell:
             print ("Generator summary")
@@ -284,7 +284,7 @@ class GANModel(MPIModel):
             self.combined.summary()
         if True:
             if self.with_fixed_disc: print ("the batch norm weights are fixed. heavey weight re-assigning")
-            if self.checkpoint: print ("Checkpointing the model weigths at each batch, based on the process id")
+            if self.checkpoint: print ("Checkpointing the model weigths after %d batch, based on the process id"%self.checkpoint)
             if self._onepass: print ("Training in one pass")
             if self._reversedorder: print ("will train generator first, then discriminator")
             if self._heavycheck: print("running heavy check on weight sanity")
@@ -592,9 +592,9 @@ class GANModel(MPIModel):
             else:
                 return self._twopass_train_on_batch(x,y,sample_weight,class_weight)
     def _checkpoint(self):
-        if self.checkpoint:
+        if self.checkpoint and (self.g_cc%self.checkpoint)==0:
             dest='%s/mpi_generator_%s_%s.h5'%(os.environ.get('GANCHECKPOINTLOC','.'),socket.gethostname(),os.getpid())
-            print ("Saving generator to",dest)
+            print ("Saving generator to",dest,"at",self.g_cc)
             self.generator.save_weights(dest)        
 
     def _onepass_train_on_batch(self, x, y,
