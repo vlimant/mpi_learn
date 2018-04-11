@@ -10,7 +10,7 @@ from array import array
 import time
 
 
-m mpi_learn.train.GanModel import GANModel
+from mpi_learn.train.GanModel import GANModel
 gan_args = {
     'tell': False,
     'reversedorder' : True,
@@ -34,16 +34,13 @@ Eprof = TProfile("Eprof", "Ratio of Ecal and Ep;Ep;Ecal/Ep", 100, 0, 500)
 num_events=1000
 latent = 200
 #gweight = 'gen_rootfit_2p1p1_ep33.hdf5'
-gweight1 = 'params_generator_epoch_041.hdf5' # 1 gpu
-gweight2 = 'params_generator_epoch_005.hdf5' # 8 gpu
-gweight3 = 'params_generator_epoch_002.hdf5'# 16 gpu
-gweight1='../m1_twopass_easgd_bs5_ep20_train_mpi_learn_result.h5'
-gweight2='../m1_twopass_easgd_bs10_ep20_train_mpi_learn_result.h5'
-gweight3='../m1_twopass_easgd_bs20_ep20_train_mpi_learn_result.h5'
-gm.combined.load_weights(gen_weights)
-gweights = [gweight1, gweight2, gweight3]
-label = ['1 gpu', '8 gpu', '16 gpu']
-scales = [100, 1, 1]
+gweight1='m1_twopass_easgd_bs5_ep20_train_mpi_learn_result.h5'
+gweight2='m1_twopass_easgd_bs10_ep20_train_mpi_learn_result.h5'
+gweight3='m1_twopass_easgd_bs15_ep20_train_mpi_learn_result.h5'
+gweight4='m1_twopass_easgd_bs20_ep20_train_mpi_learn_result.h5'
+gweights = [gweight1, gweight2, gweight3,gweight4]
+label = ['1 gpu', '5 gpus', '10 gpus', '15 gpus', '20 gpus']
+scales = [1, 1, 1,1]
 filename = 'ecal_ratio_multi.pdf'
 #Get Actual Data
 #d=h5py.File("/eos/project/d/dshep/LCD/V1/EleEscan/EleEscan_1_1.h5")
@@ -75,7 +72,7 @@ for i, gweight in enumerate(gweights):
    gm.combined.load_weights(gweight)
    noise = np.random.normal(0, 1, (num_events, latent))
    generator_in = np.multiply(np.reshape(Y/100, (-1, 1)), noise)
-   generated_images = gm.generator..predict(generator_in, verbose=False, batch_size=100)
+   generated_images = gm.generator.predict(generator_in, verbose=False, batch_size=100)
    GData = np.sum(generated_images, axis=(1, 2, 3))/scales[i]
 
    print GData.shape
