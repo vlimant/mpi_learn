@@ -32,7 +32,21 @@ class Data(object):
         self.batch_size = batch_size
 
     def set_file_names(self, file_names):
-        self.file_names = file_names
+        ## hook to copy data in /dev/shm
+        relocated = []
+        import os
+        if os.environ.get('GANINMEM',0):
+            goes_to = os.environ.get('GANINMEM')
+            os.system('mkdir %s/'%goes_to)
+            for fn in file_names:
+                relocate = goes_to+'/'+fn.split('/')[-1]
+                if not os.path.isfile( relocate ):
+                    print ("copying %s to %s"%( fn , relocate))
+                    if os.system('cp %s %s'%( fn ,relocate))==0:
+                        relocated.append( relocate )
+            self.file_names = relocated
+        else:
+            self.file_names = file_names
             
     def generate_data(self):
        """Yields batches of training data until none are left."""

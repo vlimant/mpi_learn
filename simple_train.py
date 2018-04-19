@@ -12,19 +12,22 @@ parser.add_option('--test',action='store_true')
 parser.add_option('--fresh',action='store_true')
 parser.add_option('--tag',default='')
 parser.add_option('--lr',type='float',default=0.0)
+parser.add_option('--epochs', type='int', default=3)
+parser.add_option('--inmem',action='store_true')
+
 (options,args) = parser.parse_args()
 
 
 gan_args = {
-    'tell': False,
-    'reversedorder' : False,
-    'heavycheck' : False,
-    'show_values' : False,
-    'gen_bn' : True,
-    'checkpoint' : False,
-    'onepass' : True,
-    'show_loss' : True,
-    'with_fixed_disc' : True ## could switch back to False and check
+    #'tell': False,
+    #'reversedorder' : False,
+    #'heavycheck' : False,
+    #'show_values' : False,
+    #'gen_bn' : True,
+    #'checkpoint' : False,
+    #'onepass' : False,
+    #'show_loss' : True,
+    #'with_fixed_disc' : True ## could switch back to False and check
     }
     
 gm = GANModel(**gan_args)
@@ -68,6 +71,18 @@ else:
 print (tag,"is the option")
 
 files = filter(None,open('train_3d.list').read().split('\n'))
+if options.inmem:
+    import os
+    relocated = []
+    os.system('mkdir /dev/shm/vlimant/')
+    for fn in files:
+        relocate = '/dev/shm/vlimant/'+fn.split('/')[-1]
+        if not os.path.isfile( relocate ):
+            print ("copying %s to %s"%( fn , relocate))
+            if os.system('cp %s %s'%( fn ,relocate))==0:
+                relocated.append( relocate )
+    files = relocated
+
 history = {}
 thistory = {}
 etimes=[]
@@ -87,13 +102,17 @@ def dump():
             'et':etimes,
             'ft':ftimes
             } ))    
-for e in range(3): ## epochs
+
+nepochs = options.epochs
+
+for e in range(nepochs):
     history[e] = []
     thistory[e] = []
     ftimes[e] = []
     e_start = time.mktime(time.gmtime())
     if max_batch and ibatch>max_batch:
         break
+    print ("starting epoch",e,"with",len(files),"files")
     for f in files:
         f_start = time.mktime(time.gmtime())            
         print ("new file",f,"epoch",e)
@@ -141,3 +160,4 @@ for e in range(3): ## epochs
     e_stop = time.mktime(time.gmtime())
     print (e_stop - e_start,"[s] for epoch",e)
     etimes.append( e_stop - e_start)
+    dump()
