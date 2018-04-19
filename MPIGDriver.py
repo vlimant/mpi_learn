@@ -143,7 +143,8 @@ if __name__ == '__main__':
     else:
         algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
-
+    if args.load_algo:
+        algo.load(args.load_algo)
     # Most Keras callbacks are supported
     callbacks = []
     callbacks.append( cbks.ModelCheckpoint( '_'.join([

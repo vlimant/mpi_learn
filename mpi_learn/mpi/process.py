@@ -684,6 +684,7 @@ class MPIMaster(MPIProcess):
         #self.callbacks.on_train_end()
         self.callback.on_train_end()
         self.send_history_to_parent()
+        self.algo.save()
         if not self.has_parent:
             return self.histories
 

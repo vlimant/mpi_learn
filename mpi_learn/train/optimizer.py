@@ -2,6 +2,7 @@
 
 import numpy as np
 import copy
+import pickle
 
 from ..utils import weights_from_shapes
 
@@ -14,6 +15,12 @@ class Optimizer(object):
 
     def apply_update(self, weights, gradient):
         raise NotImplementedError
+
+    def save(self, fn = 'algo_.pkl'):
+        pickle.dump(self, open(fn,'w') )
+    def load(self, fn = 'algo_.pkl'):
+        self = pickle.load( open(fn) )
+
 
 class MultiOptimizer(Optimizer):
     def __init__(self, opt, s):
