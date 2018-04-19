@@ -945,9 +945,10 @@ class GANModel(MPIModel):
 
 
 class GANModelBuilder(ModelBuilder):
-    def __init__(self, c, device_name='cpu',tf=False):
+    def __init__(self, c, device_name='cpu',tf=False, weights=None):
         ModelBuilder.__init__(self, c)
         self.tf = tf
+        self.weights = weights.split(',') if weights else [None,None]
         self.device = self.get_device_name(device_name) if self.tf else None
 
     def build_model(self):
@@ -956,10 +957,11 @@ class GANModelBuilder(ModelBuilder):
             #with K.tf.device('/gpu:0'):#self.device if 'gpu' in self.device else ''):
             #with K.tf.device(self.device if 'gpu' in self.device else ''):
             m = GANModel()
-            return m
         else:
             m = GANModel()
-            return m
+        if self.weights:
+            for mm,w in zip(m.models, weights):
+                mm.load_weights( w )
 
     def get_device_name(self, device):
         """Returns a TF-style device identifier for the specified device.

@@ -246,15 +246,6 @@ class MPIModel(object):
                 print (fn)
                 m.save( fn, **kwargs )
 
-class GANModel(MPIModel):
-    def __init__(self):
-        self.gen = None
-        self.disc = None
-        MPIModel.__init__(self, models = [ self.gen, self.disc ])
-
-    def test_on_batch(self, **args):
-        pass
-
 class ModelBuilder(object):
     """Class containing instructions for building neural net models.
         Derived classes should implement the build_model function.
@@ -343,8 +334,9 @@ class ModelFromJsonTF(ModelBuilder):
         with K.tf.device(self.device):
             if type(self.filename) == list:
                 models = []
-                for fn in self.filename:
-                    models.append(load_model(filename=fn))
+                self.weights = self.weights.split(',') if self.weights else [None]*len(self.filename)
+                for fn,w in zip(self.filename, self.weights):
+                    models.append(load_model(filename=fn, weights_file=w))
                 return MPIModel(models = models)
             else:
                 model = load_model(filename=self.filename, json_str=self.json_str, 
