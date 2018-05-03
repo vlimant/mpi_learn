@@ -208,6 +208,9 @@ class MPIManager(object):
                     model_builder=self.model_builder, callbacks=self.worker_callbacks, 
                     verbose=self.verbose, custom_objects=self.custom_objects)
 
+    def figure_of_merit(self):
+        return self.process.model.figure_of_merit()
+
     def train(self):
         return self.process.train()
 
