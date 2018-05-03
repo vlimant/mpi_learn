@@ -236,7 +236,13 @@ class MPIModel(object):
             for m in self.models:
                 h.append(m.test_on_batch( **args ))
             return np.asarray(h)
-        
+
+    def figure_of_merit(self, **args):
+        ## runs like predict trace, and provides a non differentiable figure of merit for hyper-opt
+        ## can of course be the validation loss
+        return 0.
+
+
     def save(self, *args,**kwargs):
         if self.model:
             self.model.save( *args, **kwargs )
