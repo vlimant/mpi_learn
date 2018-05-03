@@ -84,37 +84,6 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
         return dev
                                                                                         
             
-class MPIKFoldManager(MPIManager):
-    def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
-                  val_list, num_masters=1, synchronous=False, callbacks=[], 
-                  worker_callbacks=[], verbose=False, custom_objects={}):
-        if NFolds <=1:
-            print ("this is a bit dumb, but we can do it")
-        
-        if int(comm.Get_size() / float(NFolds))<=1:
-            print ("There is less than one master+one worker per fold, this isnt' going to work")
-            
-        rank = comm.rank()
-        fold_num = int(rank * NFolds / comm.Get_size())
-        comm_fold = comm.Split(fold_num)
-        print ("For node {0}, with block rank {1}, send in fold {2}".format(MPI.COMM_WORLD.Get_rank(), rank, fold_num))
-        self.manager = None
-        if comm_fold.Get_Rank() == 0:
-            ## massage the train_list and val_list one way or the other
-            ## my opinion is that the manager should be passed a train list, and it makes the split, train/val
-            ## to be FIXED
-            train_list_on_fold = train_list
-            val_list_on_fold = val_list
-            self.manager = 
-                MPIManager(comm_fold, data, algo, model_builder, num_epochs, train_list_on_fold,
-                           val_list_on_fold, num_masters, synchronous, callbacks,
-                           worker_callbacks, verbose, custom_objects)
-                
-        def train(self):
-            ## this call should start the training of all managers
-            if self.manager:
-                self.manager.train()
-    
 
 class MPIManager(object):
     """The MPIManager class defines the topology of the MPI process network
@@ -316,3 +285,34 @@ class MPIManager(object):
         if self.comm_masters is not None:
             self.comm_masters.Free()
         
+
+class MPIKFoldManager(MPIManager):
+    def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
+                  val_list, num_masters=1, synchronous=False, callbacks=[], 
+                  worker_callbacks=[], verbose=False, custom_objects={}):
+        if NFolds <=1:
+            print ("this is a bit dumb, but we can do it")
+        
+        if int(comm.Get_size() / float(NFolds))<=1:
+            print ("There is less than one master+one worker per fold, this isnt' going to work")
+            
+        rank = comm.rank()
+        fold_num = int(rank * NFolds / comm.Get_size())
+        comm_fold = comm.Split(fold_num)
+        print ("For node {0}, with block rank {1}, send in fold {2}".format(MPI.COMM_WORLD.Get_rank(), rank, fold_num))
+        self.manager = None
+        if comm_fold.Get_Rank() == 0:
+            ## massage the train_list and val_list one way or the other
+            ## my opinion is that the manager should be passed a train list, and it makes the split, train/val
+            ## to be FIXED
+            train_list_on_fold = train_list
+            val_list_on_fold = val_list
+            self.manager = MPIManager(comm_fold, data, algo, model_builder, num_epochs, train_list_on_fold,
+                                      val_list_on_fold, num_masters, synchronous, callbacks,
+                                      worker_callbacks, verbose, custom_objects)
+                
+        def train(self):
+            ## this call should start the training of all managers
+            if self.manager:
+                self.manager.train()
+    
