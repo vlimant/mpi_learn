@@ -266,6 +266,10 @@ class ModelBuilder(object):
         """
         self.comm = comm
 
+    def get_device_name(self, device):
+        """Should return a device name under a desired convention"""
+        return device
+
     def build_model(self):
         """Should return an uncompiled Keras model."""
         raise NotImplementedError
