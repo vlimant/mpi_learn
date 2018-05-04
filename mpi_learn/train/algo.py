@@ -148,3 +148,8 @@ class Algo(object):
                     self.optimizer = MultiOptimizer( self.optimizer, len(weights))
             new_weights = self.optimizer.apply_update( weights, update )
             return new_weights
+        
+    def save(self):
+        self.optimizer.save()
+    def load(self, fn):
+        self.optimizer.load(fn)

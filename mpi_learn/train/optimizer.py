@@ -17,9 +17,14 @@ class Optimizer(object):
         raise NotImplementedError
 
     def save(self, fn = 'algo_.pkl'):
-        pickle.dump(self, open(fn,'w') )
+        d= open(fn,'wb')
+        pickle.dump(self, d)
+        d.close()
+
     def load(self, fn = 'algo_.pkl'):
-        self = pickle.load( open(fn) )
+        d = open(fn, 'rb')
+        self = pickle.load( d )
+        d.close()
 
 
 class MultiOptimizer(Optimizer):
