@@ -929,7 +929,8 @@ class GANModel(MPIModel):
     def figure_of_merit(self, **args):
        num_events=2000
        num_data = 100000
-       sortedpath = 'SortedData/event_*.hdf5'
+       #sortedpath = 'SortedData/event_*.hdf5'
+       sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
        Test = False
        latent= self.latent_size
        m = 2
