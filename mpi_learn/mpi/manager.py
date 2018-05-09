@@ -314,6 +314,13 @@ class MPIKFoldManager(MPIManager):
         comm_fold = comm.Split(fold_num)
         print ("For node {0}, with block rank {1}, send in fold {2}".format(MPI.COMM_WORLD.Get_rank(), rank, fold_num))
         self.manager = None
+
+        if val_list:
+            print ("MPIKFoldManager would not expect to be given a validation list")
+        all_files = train_list+val_list
+        from sklearn.model_selection import KFold
+        folding = KFold(n_splits = NFolds)
+        folding.split( all_files )
         if comm_fold.Get_Rank() == 0:
             ## massage the train_list and val_list one way or the other
             ## my opinion is that the manager should be passed a train list, and it makes the split, train/val
