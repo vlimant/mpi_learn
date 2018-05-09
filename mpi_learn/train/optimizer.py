@@ -79,6 +79,7 @@ class RunningAverageOptimizer(Optimizer):
         RunningAverageOptimizer.reset(self)
 
     def reset(self):
+        super(RunningAverageOptimizer, self).reset()
         self.epsilon = self.init_epsilon
         self.rho = self.init_rho
         self.running_g2 = None
@@ -132,10 +133,11 @@ class Adam(RunningAverageOptimizer):
         Adam.reset(self)
 
     def reset(self):
-         self.beta_1 = self.init_beta_1
-         self.learning_rate = self.init_learning_rate
-         self.t = 0
-         self.m = None
+        super(Adam, self).reset()
+        self.beta_1 = self.init_beta_1
+        self.learning_rate = self.init_learning_rate
+        self.t = 0
+        self.m = None
 
     def running_average_np(self, previous, update):
         """Computes and returns the running average of a numpy array.
@@ -189,7 +191,9 @@ class AdaDelta(RunningAverageOptimizer):
         AdaDelta.reset(self)
 
     def reset(self):
-        self.running_dx2 = None        
+        super(AdaDelta, self).reset()
+        self.running_dx2 = None
+
     def apply_update(self, weights, gradient):
         """Update the running averages of gradients and weight updates,
             and compute the Adadelta update for this step."""
@@ -217,6 +221,7 @@ class RMSProp(RunningAverageOptimizer):
         super(RMSProp, self).__init__(rho, epsilon)
         self.init_learning_rate = learning_rate
     def reset(self):
+        super(RMSProp, self).reset()
         self.learning_rate = self.init_learning_rate
 
     def apply_update(self, weights, gradient):
