@@ -240,7 +240,10 @@ class MPIModel(object):
     def figure_of_merit(self, **args):
         ## runs like predict trace, and provides a non differentiable figure of merit for hyper-opt
         ## can of course be the validation loss
-        return 0.
+        if self.model:
+           return self.model.figure_of_merit(**args)
+        else: 
+           return 0.
 
 
     def save(self, *args,**kwargs):

@@ -206,6 +206,100 @@ def generator(latent_size=200, return_intermediate=False, with_bn=True):
     _Model(input=[latent], output=fake_image)
     return _Model(input=[latent], output=fake_image, name='generator_model')
 
+def get_sums(images):
+    sumsx = np.squeeze(np.sum(images, axis=(2,3)))
+    sumsy = np.squeeze(np.sum(images, axis=(1,3)))
+    sumsz = np.squeeze(np.sum(images, axis=(1,2)))
+    return sumsx, sumsy, sumsz
+
+def get_moments(images, sumsx, sumsy, sumsz, totalE, m):
+    ecal_size = 25
+    totalE = np.squeeze(totalE)
+    index = images.shape[0]
+    momentX = np.zeros((index, m))
+    momentY = np.zeros((index, m))
+    momentZ = np.zeros((index, m))
+    ECAL_midX = np.zeros(index)
+    ECAL_midY = np.zeros(index)
+    ECAL_midZ = np.zeros(index)
+    for i in range(m):
+      relativeIndices = np.tile(np.arange(ecal_size), (index,1))
+      moments = np.power((relativeIndices.transpose()-ECAL_midX).transpose(), i+1)
+      ECAL_momentX = umath.inner1d(sumsx, moments) /totalE
+      if i==0: ECAL_midX = ECAL_momentX.transpose()
+      momentX[:,i] = ECAL_momentX
+    for i in range(m):
+      relativeIndices = np.tile(np.arange(ecal_size), (index,1))
+      moments = np.power((relativeIndices.transpose()-ECAL_midY).transpose(), i+1)
+      ECAL_momentY = umath.inner1d(sumsy, moments) /totalE
+      if i==0: ECAL_midY = ECAL_momentY.transpose()
+      momentY[:,i]= ECAL_momentY
+    for i in range(m):
+      relativeIndices = np.tile(np.arange(ecal_size), (index,1))
+      moments = np.power((relativeIndices.transpose()-ECAL_midZ).transpose(), i+1)
+      ECAL_momentZ = umath.inner1d(sumsz, moments)/totalE
+      if i==0: ECAL_midZ = ECAL_momentZ.transpose()
+      momentZ[:,i]= ECAL_momentZ
+    return momentX, momentY, momentZ
+
+def load_sorted(sorted_path):
+    sorted_files = sorted(glob.glob(sorted_path))
+    energies = []
+    srt = {}
+    for f in sorted_files:
+        energy = int(filter(str.isdigit, f)[:-1])
+        energies.append(energy)
+        srtfile = h5py.File(f,'r')
+        srt["events_act" + str(energy)] = np.array(srtfile.get('ECAL'))
+        srt["energy" + str(energy)] = np.array(srtfile.get('Target'))
+    return energies, srt
+
+def generate(g, index, latent, sampled_labels):
+    noise = np.random.normal(0, 1, (index, latent))
+    sampled_labels=np.expand_dims(sampled_labels, axis=1)
+    gen_in = sampled_labels * noise
+    generated_images = g.predict(gen_in, verbose=False, batch_size=100)
+    return generated_images
+
+
+
+def metric4(var, energies, m):
+
+   ecal_size = 25
+   metricp = 0
+   metrice = 0
+   for energy in energies:
+     #Relative error on mean moment value for each moment and each axis
+     x_act= np.mean(var["momentX_act"+ str(energy)], axis=0)
+     x_gan= np.mean(var["momentX_gan"+ str(energy)], axis=0)
+     y_act= np.mean(var["momentY_act"+ str(energy)], axis=0)
+     y_gan= np.mean(var["momentY_gan"+ str(energy)], axis=0)
+     z_act= np.mean(var["momentZ_act"+ str(energy)], axis=0)
+     z_gan= np.mean(var["momentZ_gan"+ str(energy)], axis=0)
+     var["posx_error"+ str(energy)]= (x_act - x_gan)/x_act
+     var["posy_error"+ str(energy)]= (y_act - y_gan)/y_act
+     var["posz_error"+ str(energy)]= (z_act - z_gan)/z_act
+     #Taking absolute of errors and adding for each axis then scaling by 3
+     var["pos_error"+ str(energy)]= (np.absolute(var["posx_error"+ str(energy)]) + np.absolute(var["posy_error"+ str(energy)]) + np.absolute(var["posz_error"+ str(energy)]))/3
+     #Summing over moments and dividing for number of moments
+     var["pos_total"+ str(energy)]= np.sum(var["pos_error"+ str(energy)])/m
+     metricp += var["pos_total"+ str(energy)]
+     #Take profile along each axis and find mean along events
+     sumxact, sumyact, sumzact = np.mean(var["sumsx_act" + str(energy)], axis=0), np.mean(var["sumsy_act" + str(energy)], axis=0), np.mean(var["sumsz_act" + str(energy)], axis=0)
+     sumxgan, sumygan, sumzgan = np.mean(var["sumsx_gan" + str(energy)], axis=0), np.mean(var["sumsy_gan" + str(energy)], axis=0), np.mean(var["sumsz_gan" + str(energy)], axis=0)
+     var["eprofilex_error"+ str(energy)] = np.divide((sumxact - sumxgan), sumxact)
+     var["eprofiley_error"+ str(energy)] = np.divide((sumyact - sumygan), sumyact)
+     var["eprofilez_error"+ str(energy)] = np.divide((sumzact - sumzgan), sumzact)
+     #Take absolute of error and mean for all events
+     var["eprofilex_total"+ str(energy)]= np.sum(np.absolute(var["eprofilex_error"+ str(energy)]))/ecal_size
+     var["eprofiley_total"+ str(energy)]= np.sum(np.absolute(var["eprofiley_error"+ str(energy)]))/ecal_size
+     var["eprofilez_total"+ str(energy)]= np.sum(np.absolute(var["eprofilez_error"+ str(energy)]))/ecal_size
+
+     var["eprofile_total"+ str(energy)]= (var["eprofilex_total"+ str(energy)] + var["eprofiley_total"+ str(energy)] + var["eprofilez_total"+ str(energy)])/3
+     metrice += var["eprofile_total"+ str(energy)]
+   tot = (metricp + metrice)/len(energies)
+   return(tot)
+
 
 
 def bit_flip(x, prob=0.05):
@@ -831,6 +925,32 @@ class GANModel(MPIModel):
                 print ("#"*30)
 
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
+
+    def figure_of_merit(self):
+       num_events=2000
+       num_data = 100000
+       sortedpath = 'SortedData/event_*.hdf5'
+       Test = False
+       latent= 200
+       m = 2
+       var = {}
+       g =self.generator
+       energies, var = load_sorted(sortedpath)
+       for energy in energies:
+           var["index" + str(energy)]= var["energy" + str(energy)].shape[0]
+           total += var["index" + str(energy)]
+
+       for energy in energies:
+           var["events_gan" + str(energy)] = generate(g, var["index" + str(energy)], latent, var["energy" + str(energy)]/100)
+
+       for energy in energies:
+          var["ecal_act"+ str(energy)] = np.sum(var["events_act" + str(energy)], axis = (1, 2, 3))
+          var["ecal_gan"+ str(energy)] = np.sum(var["events_gan" + str(energy)], axis = (1, 2, 3))
+          var["sumsx_act"+ str(energy)], var["sumsy_act"+ str(energy)], var["sumsz_act"+ str(energy)] = get_sums(var["events_act" + str(energy)])
+          var["sumsx_gan"+ str(energy)], var["sumsy_gan"+ str(energy)], var["sumsz_gan"+ str(energy)] = get_sums(var["events_gan" + str(energy)])
+          var["momentX_act" + str(energy)], var["momentY_act" + str(energy)], var["momentZ_act" + str(energy)]= get_moments(var["events_act" + str(energy)], var["sumsx_act"+ str(energy)], var["sumsy_act"+ str(energy)], var["sumsz_act"+ str(energy)], var["ecal_act"+ str(energy)], m)
+          var["momentX_gan" + str(energy)], var["momentY_gan" + str(energy)], var["momentZ_gan" + str(energy)] = get_moments(var["events_gan" + str(energy)], var["sumsx_gan"+ str(energy)], var["sumsy_gan"+ str(energy)], var["sumsz_gan"+ str(energy)], var["ecal_gan"+ str(energy)], m)
+       return metric4(var, energies, m)
 
 
 """
