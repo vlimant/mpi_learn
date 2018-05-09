@@ -94,6 +94,11 @@ class RunningAverageOptimizer(Optimizer):
             return new_contribution + old_contribution
         except Exception as e:
             print ("FAILED TO COMPUTE THE RUNNING AVG SQUARE due to",str(e))
+            print ("rho",self.rho)
+            print ("min update",np.min(update))
+            print ("max update",np.max(update))
+            print ("min previous",np.min(previous))
+            print ("max previous",np.max(previous))
             return previous
 
     def running_average_square(self, previous, update):
@@ -147,7 +152,12 @@ class Adam(RunningAverageOptimizer):
             old_contribution = self.beta_1 * previous
             return new_contribution + old_contribution
         except Exception as e:
-            print ("FAILED TO update the running average due to",str(e))
+            print ("FAILED TO UPDATE THE RUNNING AVERAGE due to",str(e))
+            print ("beta_1",self.beta_1)
+            print ("min update",np.min(update))
+            print ("max update",np.max(update))
+            print ("min previous",np.min(previous))
+            print ("max previous",np.max(previous))
             return previous
 
 
@@ -175,10 +185,46 @@ class Adam(RunningAverageOptimizer):
         for w, g, g2 in zip(weights, self.m, self.running_g2):
             try:
                 update = alpha_t * g / ( np.sqrt(g2) + self.epsilon )
-                new_weights.append( w - update )
             except Exception as e:
                 print ("FAILED TO MAKE A WEIGHT UPDATE due to",str(e))
-                new_weights.append( w )
+                print ("alpha_t",alpha_t)
+                print ("beta_1",self.beta_1)
+                print ("t",self.t)
+                print ("learning rate",self.learning_rate)
+                print ("rho",self.rho)
+                print ("epsilon",self.epsilon)
+                print ("min gradient",np.min( g ))
+                print ("max gradient",np.max( g ))
+                print ("min gradient 2",np.min( g2 ))
+                print ("max gradient 2",np.max( g2 ))
+                try:
+                    update = alpha_t * g / ( np.sqrt(g2) + self.epsilon )
+                    print ("a")
+                    try:
+                        new_weights.append( w - update )
+                    except:
+                        print ("no sub")
+                except:
+                    try:
+                        update = g / ( np.sqrt(g2) + self.epsilon )
+                        print ("b")
+                        print ("min b",np.min( update ))
+                        print ("max b",np.max( update ))
+                        print ("min |b|",np.min(np.fabs( update)))
+                        #update *= alpha_t
+                    except:
+                        try:
+                            update = 1./ ( np.sqrt(g2) + self.epsilon )
+                            print ("c")
+                        except:
+                            try:
+                                update = 1./ ( g2 + self.epsilon )
+                                print ("d")
+                            except:
+                                print ("e")
+                
+                update = 0        
+            new_weights.append( w - update )
         return new_weights
 
 class AdaDelta(RunningAverageOptimizer):
