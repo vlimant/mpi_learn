@@ -725,7 +725,11 @@ class MPIMaster(MPIProcess):
             print (self.rank,"weights",np.ravel(self.weights[1][0])[:10])
             print (self.rank,"update",np.ravel(self.update[0][0])[:10])
             print (self.rank,"update",np.ravel(self.update[1][0])[:10])
-        with np.errstate( divide='raise', invalid='raise', over='raise', under ='raise' ):
+        with np.errstate( divide='raise', 
+                          invalid='raise', 
+                          over='raise',
+                          #under ='raise'## might not be too bad
+                      ):
             self.weights = self.algo.apply_update( self.weights, self.update )
         if self.tell_update:
             print (self.rank,"new weights",np.ravel(self.weights[0][0])[:10])
