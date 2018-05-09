@@ -87,9 +87,13 @@ class RunningAverageOptimizer(Optimizer):
         """Computes and returns the running average of the square of a numpy array.
             previous (numpy array): value of the running average in the previous step
             update (numpy array): amount of the update"""
-        new_contribution = (1-self.rho) * np.square(update)
-        old_contribution = self.rho * previous
-        return new_contribution + old_contribution
+        try:
+            new_contribution = (1-self.rho) * np.square(update)
+            old_contribution = self.rho * previous
+            return new_contribution + old_contribution
+        except Exception as e:
+            print ("FAILED TO COMPUTE THE RUNNING AVG SQUARE due to",str(e))
+            return previous
 
     def running_average_square(self, previous, update):
         """Returns the running average of the square of a quantity.
@@ -136,9 +140,14 @@ class Adam(RunningAverageOptimizer):
     def running_average_np(self, previous, update):
         """Computes and returns the running average of a numpy array.
             Parameters are the same as those for running_average_square_np"""
-        new_contribution = (1-self.beta_1) * update
-        old_contribution = self.beta_1 * previous
-        return new_contribution + old_contribution
+        try:
+            new_contribution = (1-self.beta_1) * update
+            old_contribution = self.beta_1 * previous
+            return new_contribution + old_contribution
+        except Exception as e:
+            print ("FAILED TO update the running average due to",str(e))
+            return previous
+
 
     def running_average(self, previous, update):
         """Returns the running average of the square of a quantity.
@@ -162,8 +171,12 @@ class Adam(RunningAverageOptimizer):
         alpha_t = self.learning_rate * (1 - self.rho**self.t)**(0.5) / (1 - self.beta_1**self.t)
         new_weights = []
         for w, g, g2 in zip(weights, self.m, self.running_g2):
-            update = alpha_t * g / ( np.sqrt(g2) + self.epsilon )
-            new_weights.append( w - update )
+            try:
+                update = alpha_t * g / ( np.sqrt(g2) + self.epsilon )
+                new_weights.append( w - update )
+            except Exception as e:
+                print ("FAILED TO MAKE A WEIGHT UPDATE due to",str(e))
+                new_weights.append( w )
         return new_weights
 
 class AdaDelta(RunningAverageOptimizer):
