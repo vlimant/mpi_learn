@@ -926,12 +926,12 @@ class GANModel(MPIModel):
 
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
-    def figure_of_merit(self):
+    def figure_of_merit(self, **args):
        num_events=2000
        num_data = 100000
        sortedpath = 'SortedData/event_*.hdf5'
        Test = False
-       latent= 200
+       latent= self.latent_size
        m = 2
        var = {}
        g =self.generator
@@ -952,116 +952,6 @@ class GANModel(MPIModel):
           var["momentX_gan" + str(energy)], var["momentY_gan" + str(energy)], var["momentZ_gan" + str(energy)] = get_moments(var["events_gan" + str(energy)], var["sumsx_gan"+ str(energy)], var["sumsy_gan"+ str(energy)], var["sumsz_gan"+ str(energy)], var["ecal_gan"+ str(energy)], m)
        return metric4(var, energies, m)
 
-
-"""
-        ## the rest is legacy
-        root_fit = [0.0018, -0.023, 0.11, -0.28, 2.21]
-        x_disc_real =x
-        y_disc_real = y
-        if self.batch_size is None:
-            ## fix me, maybe
-            self.batch_size = x_disc_real.shape[0]
-            print ("In train_on_batch: initializing sizes",x_disc_real.shape,[ yy.shape for yy in y])
-
-
-        noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
-        sampled_energies = np.random.uniform(0.1, 5,(self.batch_size,1))
-        generator_ip = np.multiply(sampled_energies, noise)
-        ratio = np.polyval(root_fit, sampled_energies)
-        ecal_ip = np.multiply(ratio, sampled_energies)
-        now = time.mktime(time.gmtime())
-        if self.p_cc>1 and len(self.p_t)%100==0:
-            print ("prediction average",np.mean(self.p_t),"[s]' over",len(self.p_t))
-        generated_images = self.generator.predict(generator_ip)
-        done = time.mktime(time.gmtime())
-        if self.p_cc:
-            self.p_t.append( done - now )
-        self.p_cc +=1
-
-        ## need to bit flip the true labels too
-        bf = bit_flip(y[0])
-        y_disc_fake = [bit_flip(np.zeros(self.batch_size)), sampled_energies.reshape((-1,)), ecal_ip.reshape((-1,))]
-        re_y = [bf, y_disc_real[1], y_disc_real[2]]
-        #print ("got",[yy.shape for yy in re_y])
-        #print ("got",[yy.shape for yy in y_disc_fake])
-
-        two_pass = True
-        #print ("calling discr",self.d_cc)
-        if self.d_cc>1 and len(self.d_t)%100==0:
-            print ("discriminator average",np.mean(self.d_t),"[s] over ",len(self.d_t))
-        now = time.mktime(time.gmtime())
-        if two_pass:
-
-            #real_batch_loss = self.discriminator.train_on_batch(x_disc_real, y_disc_real)
-            real_batch_loss = self.discriminator.train_on_batch(x_disc_real,re_y)
-            fake_batch_loss = self.discriminator.train_on_batch(generated_images, y_disc_fake)
-            epoch_disc_loss = [
-                (a + b) / 2 for a, b in zip(real_batch_loss, fake_batch_loss)
-            ]
-        else:
-            ## train the discriminator in one go
-            bb_x  = np.concatenate( (x_disc_real, generated_images))
-            bb_y = [np.concatenate((a,b)) for a,b in zip(re_y, y_disc_fake)]
-            rng_state = np.random.get_state()
-            np.random.shuffle( bb_x )
-            np.random.set_state(rng_state)
-            np.random.shuffle( bb_y[0] )
-            np.random.set_state(rng_state)
-            np.random.shuffle( bb_y[1] )
-            np.random.set_state(rng_state)
-            np.random.shuffle( bb_y[2] )
-            epoch_disc_loss = self.discriminator.train_on_batch( bb_x, bb_y )
-
-
-        done = time.mktime(time.gmtime())
-        if self.d_cc:
-            self.d_t.append( done - now )
-        self.d_cc+=1
-
-
-        #print ("calling gen",self.g_cc)
-        if self.g_cc>1 and len(self.g_t)%100==0:
-            print ("generator average ",np.mean(self.g_t),"[s] over",len(self.g_t))
-        now = time.mktime(time.gmtime())
-        if two_pass:
-            gen_losses = []
-            trick = np.ones(self.batch_size)
-            for _ in range(2):
-                noise = np.random.normal(0, 1, (self.batch_size, self.latent_size))
-                sampled_energies = np.random.uniform(0.1, 5, ( self.batch_size,1 ))
-                generator_ip = np.multiply(sampled_energies, noise)
-                ratio = np.polyval(root_fit, sampled_energies)
-                ecal_ip = np.multiply(ratio, sampled_energies)
-
-                gen_losses.append(self.combined.train_on_batch(
-                    [generator_ip],
-                    [trick, sampled_energies.reshape((-1, 1)), ecal_ip]))
-
-            epoch_gen_loss = [
-                (a + b) / 2 for a, b in zip(*gen_losses)
-            ]
-        else:
-            noise = np.random.normal(0, 1, (2*self.batch_size, self.latent_size))
-            sampled_energies = np.random.uniform(0.1, 5, (2*self.batch_size,1 ))
-            generator_ip = np.multiply(sampled_energies, noise)
-            ratio = np.polyval(root_fit, sampled_energies)
-            ecal_ip = np.multiply(ratio, sampled_energies)
-            trick = np.ones(2*self.batch_size)
-            epoch_gen_loss = self.combined.train_on_batch(
-                [generator_ip],
-                [trick,sampled_energies.reshape((-1, 1)), ecal_ip])
-
-
-
-        done = time.mktime(time.gmtime())
-        if self.g_cc:
-            self.g_t.append( done - now )
-        self.g_cc+=1
-
-        #self.epoch_disc_loss.extend( epoch_disc_loss )
-        #self.epoch_gen_loss.extend( epoch_gen_loss )
-        return np.asarray([epoch_disc_loss, epoch_gen_loss])
-"""
 
 
 class GANModelBuilder(ModelBuilder):
