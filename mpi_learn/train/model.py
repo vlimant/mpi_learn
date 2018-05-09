@@ -208,17 +208,6 @@ class MPIModel(object):
                 c_args = copy.deepcopy( args )
                 m.compile( **c_args )
 
-    #def metrics_names(self):
-    #    if self.model:
-    #        return self.model.metrics_names
-    #    else:
-    #        print ("metrics_names not impletment for multi models")
-    #        sys.exit(123)
-            
-    #def callback_model(self):
-    #    if self.model:
-    #        return getattr(self.model, 'callback_model', None)
-        
     def train_on_batch(self, **args):
         if self.model:
             return np.asarray(self.model.train_on_batch( **args ))
@@ -241,9 +230,11 @@ class MPIModel(object):
         ## runs like predict trace, and provides a non differentiable figure of merit for hyper-opt
         ## can of course be the validation loss
         if self.model:
-           return self.model.figure_of_merit(**args)
+            ## return a default value from the validation history
+            return (1.-self.model.history.history['val_acc'][-1])
+            #return self.model.history.history['val_loss'][-1]
         else: 
-           return 0.
+            return 0.
 
 
     def save(self, *args,**kwargs):
