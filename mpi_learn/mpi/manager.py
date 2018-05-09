@@ -50,6 +50,9 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     else:
         worker_id = -1
 
+    print ("gpu ranks",gpu_ranks)
+    print ("gpu limit",gpu_limit)
+
     # get_num_gpus will fail if CUDA is not installed, so we short circuit if 0 GPUs are requested
     if gpu_limit == 0:
         return 'cpu'
@@ -61,20 +64,27 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     #else:
     #    return 'gpu%d' % (worker_id%(max_gpu+1))
 
-    def get_gpu_list(mem_lim = 5000):
+    def get_gpu_list(mem_lim = 1):
         import gpustat
         stats = gpustat.GPUStatCollection.new_query()
         ids = list(map(lambda gpu: int(gpu.entry['index']), stats))
         ratios = map(lambda gpu: float(gpu.entry['memory.used'])/float(gpu.entry['memory.total']), stats)
         #used = list(map(lambda gpu: float(gpu.entry['memory.used']), stats))
         #unused_gpu = filter(lambda x: x[1] < 100.0, zip(ids, used))
+        print ("GPU usage",[gpu.entry for gpu in stats])
         free = list(map(lambda gpu: float(gpu.entry['memory.total'])-float(gpu.entry['memory.used']), stats))
-        unused_gpu = filter(lambda x: x[1]  > mem_lim, zip(ids, free))
-        
+        unused_gpu = list(filter(lambda x: x[1]  > mem_lim, zip(ids, free)))
+        print ("unused",unused_gpu)
         return [x[0] for x in unused_gpu]
 
     gpu_list = get_gpu_list()
-    if worker_id < 0 or len(gpu_list) == 0:
+    print ("list of gpu",gpu_list)
+    print ("worker id",worker_id)
+    if worker_id < 0:
+        dev = 'gpu%d' % (gpu_list[0])
+        return dev
+
+    if len(gpu_list) == 0:
         print("No free GPU available. Using CPU instead.")
         return 'cpu'
     else:
