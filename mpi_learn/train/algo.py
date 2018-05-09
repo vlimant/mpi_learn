@@ -68,6 +68,10 @@ class Algo(object):
             self.worker_update_type = 'update'
             self.send_before_apply = False
 
+    def reset(self):
+        ## reset any caching running values
+        self.optimizer.reset()
+
     def __str__(self):
         strs = [ "optimizer: "+str(self.optimizer_name) ]
         strs += [ opt+": "+str(getattr(self, opt)) for opt in self.supported_opts ]

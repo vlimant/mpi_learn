@@ -13,6 +13,9 @@ class Optimizer(object):
     def __init__(self):
         pass
 
+    def reset(self):
+        pass
+
     def apply_update(self, weights, gradient):
         raise NotImplementedError
 
@@ -30,6 +33,10 @@ class Optimizer(object):
 class MultiOptimizer(Optimizer):
     def __init__(self, opt, s):
         self.opts = [copy.deepcopy(opt) for i in range(s)]
+
+    def reset(self):
+        for o in self.opts:
+            o.reset()
 
     def apply_update(self, weights, gradient):
         r = []
@@ -67,8 +74,13 @@ class RunningAverageOptimizer(Optimizer):
 
     def __init__(self, rho=0.95, epsilon=1e-8):
         super(RunningAverageOptimizer, self).__init__()
-        self.rho = rho
-        self.epsilon = epsilon
+        self.init_rho = rho
+        self.init_epsilon = epsilon
+        RunningAverageOptimizer.reset(self)
+
+    def reset(self):
+        self.epsilon = self.init_epsilon
+        self.rho = self.init_rho
         self.running_g2 = None
 
     def running_average_square_np(self, previous, update):
@@ -111,10 +123,15 @@ class Adam(RunningAverageOptimizer):
     def __init__(self, learning_rate=0.001, beta_1=0.9, beta_2=0.999,
             epsilon=1e-8):
         super(Adam, self).__init__(rho=beta_2, epsilon=epsilon)
-        self.learning_rate = learning_rate
-        self.beta_1 = beta_1
-        self.t = 0
-        self.m = None
+        self.init_learning_rate = learning_rate
+        self.init_beta_1 = beta_1
+        Adam.reset(self)
+
+    def reset(self):
+         self.beta_1 = self.init_beta_1
+         self.learning_rate = self.init_learning_rate
+         self.t = 0
+         self.m = None
 
     def running_average_np(self, previous, update):
         """Computes and returns the running average of a numpy array.
@@ -156,8 +173,10 @@ class AdaDelta(RunningAverageOptimizer):
 
     def __init__(self, rho=0.95, epsilon=1e-8):
         super(AdaDelta, self).__init__(rho, epsilon)
-        self.running_dx2 = None
+        AdaDelta.reset(self)
 
+    def reset(self):
+        self.running_dx2 = None        
     def apply_update(self, weights, gradient):
         """Update the running averages of gradients and weight updates,
             and compute the Adadelta update for this step."""
@@ -183,7 +202,9 @@ class RMSProp(RunningAverageOptimizer):
 
     def __init__(self, rho=0.9, epsilon=1e-8, learning_rate=0.001):
         super(RMSProp, self).__init__(rho, epsilon)
-        self.learning_rate = learning_rate
+        self.init_learning_rate = learning_rate
+    def reset(self):
+        self.learning_rate = self.init_learning_rate
 
     def apply_update(self, weights, gradient):
         """Update the running averages of gradients,
