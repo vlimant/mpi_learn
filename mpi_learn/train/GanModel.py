@@ -108,7 +108,7 @@ def _Model(**args):
         return Model(**args)
     else:
         return Model(**args)
-def discriminator(fixed_bn = False):
+def discriminator(fixed_bn = False, discr_drop_out=0.2):
 
     image = Input(shape=( 25, 25, 25,1 ), name='image')
 
@@ -117,7 +117,7 @@ def discriminator(fixed_bn = False):
     x = _Conv3D(32, 5, 5,5,border_mode='same',
                name='disc_c1')(image)
     x = LeakyReLU()(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(discr_drop_out)(x)
 
     x = ZeroPadding3D((2, 2,2))(x)
     x = _Conv3D(8, 5, 5,5,border_mode='valid',
@@ -127,7 +127,7 @@ def discriminator(fixed_bn = False):
     x = _BatchNormalization(name='disc_bn1',
                            mode=bnm,
     )(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(discr_drop_out)(x)
 
     x = ZeroPadding3D((2, 2, 2))(x)
     x = _Conv3D(8, 5, 5,5,border_mode='valid',
@@ -138,7 +138,7 @@ def discriminator(fixed_bn = False):
                            #momentum = 0.00001
                            mode=bnm,
     )(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(discr_drop_out)(x)
 
     x = ZeroPadding3D((1, 1, 1))(x)
     x = _Conv3D(8, 5, 5,5,border_mode='valid',
@@ -148,7 +148,7 @@ def discriminator(fixed_bn = False):
     x = _BatchNormalization(name='disc_bn3',
                            mode=bnm,
     )(x)
-    x = Dropout(0.2)(x)
+    x = Dropout(discr_drop_out)(x)
 
     x = AveragePooling3D((2, 2, 2))(x)
     h = Flatten()(x)
@@ -361,6 +361,7 @@ class GANModel(MPIModel):
         self._show_weights = False
 
         self.latent_size=args.get('latent_size',200)
+        self.discr_drop_out=args.get('discr_drop_out',0.2)
         self.batch_size= None ## will be taken from the data that is passed on
         self.discr_loss_weights = [2, 0.1, 0.1]
 
@@ -408,25 +409,25 @@ class GANModel(MPIModel):
 
         x = _Conv3D(32, 5, 5,5,border_mode='same')(image)
         x = LeakyReLU()(x)
-        x = Dropout(0.2)(x)
+        x = Dropout(discr_drop_out)(x)
 
         x = ZeroPadding3D((2, 2,2))(x)
         x = _Conv3D(8, 5, 5,5,border_mode='valid')(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
+        x = Dropout(discr_drop_out)(x)
 
         x = ZeroPadding3D((2, 2, 2))(x)
         x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
+        x = Dropout(discr_drop_out)(x)
 
         x = ZeroPadding3D((1, 1, 1))(x)
         x = Conv3D(8, 5, 5,5,border_mode='valid')(x)
         x = LeakyReLU()(x)
         x = BatchNormalization()(x)
-        x = Dropout(0.2)(x)
+        x = Dropout(discr_drop_out)(x)
 
         x = AveragePooling3D((2, 2, 2))(x)
         h = Flatten()(x)
@@ -476,11 +477,10 @@ class GANModel(MPIModel):
         print('[INFO] Building generator')
         self.generator = generator(self.latent_size, with_bn = self.gen_bn)
         print('[INFO] Building discriminator')
-        self.discriminator = discriminator()
+        self.discriminator = discriminator(discr_drop_out = self.discr_drop_out)
         if self.with_fixed_disc:
-            self.fixed_discriminator = discriminator(fixed_bn=True)
+            self.fixed_discriminator = discriminator(discr_drop_out = self.discr_drop_out, fixed_bn=True)
         print('[INFO] Building combined')
-        #latent = Input(shape=(self.latent_size, ), name='combined_z')
         latent = Input(shape=(self.latent_size, ), name='combined_z')
         fake_image = self.generator(latent)
         if self.with_fixed_disc:
@@ -1070,15 +1070,14 @@ class GANModelBuilder(ModelBuilder):
         self.tf = tf
         self.weights = weights.split(',') if weights else [None,None]
         self.device = self.get_device_name(device_name) if self.tf else None
+        self.model_parameters={}
+
+    def set_params(self , **args):
+        for k,v in args.items():
+            self.model_parameters[k] = v
 
     def build_model(self):
-        if self.tf:
-            ## I have to declare the device explictely
-            #with K.tf.device('/gpu:0'):#self.device if 'gpu' in self.device else ''):
-            #with K.tf.device(self.device if 'gpu' in self.device else ''):
-            m = GANModel()
-        else:
-            m = GANModel()
+        m = GANModel(self.model_parameters)
         if self.weights:
             for mm,w in zip(m.models, weights):
                 mm.load_weights( w )
@@ -1102,3 +1101,14 @@ class GANModelBuilder(ModelBuilder):
             dev_num = 0
             dev_type = 'cpu'
         return get_device_name(dev_type, dev_num, backend='tensorflow')
+
+class GANBuilder(object):
+    def __init__(self, parameters):
+        self.parameters = parameters
+
+    def builder(self,*params):
+        args = dict(zip([p.name for p in self.parameters],params))
+        gmb = GANModelBuilder()
+        gmb.set_params(**args)
+        return gmb
+
