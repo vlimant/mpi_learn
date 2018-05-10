@@ -363,8 +363,12 @@ class GANModel(MPIModel):
         self.latent_size=args.get('latent_size',200)
         self.discr_drop_out=args.get('discr_drop_out',0.2)
         self.batch_size= None ## will be taken from the data that is passed on
-        self.discr_loss_weights = [2, 0.1, 0.1]
-
+        self.discr_loss_weights = [
+            args.get('gen_weight',2),
+            args.get('aux_weight',0.1),
+            args.get('ecal_weight',0.1)
+        ]
+        
         self.with_fixed_disc = args.get('with_fixed_disc',True)
         self.assemble_models()
         self.recompiled = False
