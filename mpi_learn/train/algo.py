@@ -155,6 +155,8 @@ class Algo(object):
             return new_weights
         
     def save(self):
-        self.optimizer.save()
+        if self.optimizer:
+            self.optimizer.save()
+
     def load(self, fn):
         self.optimizer.load(fn)
