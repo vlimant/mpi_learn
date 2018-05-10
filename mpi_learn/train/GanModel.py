@@ -957,7 +957,7 @@ class GANModel(MPIModel):
 
 class GANModelBuilder(ModelBuilder):
     def __init__(self, c, device_name='cpu',tf=False, weights=None):
-        ModelBuilder.__init__(self, c)
+        ModelBuilder.__init__(self, c )
         self.tf = tf
         self.weights = weights.split(',') if weights else [None,None]
         self.device = self.get_device_name(device_name) if self.tf else None
@@ -968,7 +968,7 @@ class GANModelBuilder(ModelBuilder):
             self.model_parameters[k] = v
 
     def build_model(self):
-        m = GANModel(self.model_parameters)
+        m = GANModel(**self.model_parameters)
         if self.weights:
             for mm,w in zip(m.models, weights):
                 mm.load_weights( w )
@@ -999,7 +999,7 @@ class GANBuilder(object):
 
     def builder(self,*params):
         args = dict(zip([p.name for p in self.parameters],params))
-        gmb = GANModelBuilder()
+        gmb = GANModelBuilder(None) ## will be set later
         gmb.set_params(**args)
         return gmb
 

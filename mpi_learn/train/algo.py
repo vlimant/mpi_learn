@@ -70,7 +70,8 @@ class Algo(object):
 
     def reset(self):
         ## reset any caching running values
-        self.optimizer.reset()
+        if self.optimizer:
+            self.optimizer.reset()
 
     def __str__(self):
         strs = [ "optimizer: "+str(self.optimizer_name) ]
