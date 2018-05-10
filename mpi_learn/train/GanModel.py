@@ -959,7 +959,7 @@ class GANModelBuilder(ModelBuilder):
     def __init__(self, c, device_name='cpu',tf=False, weights=None):
         ModelBuilder.__init__(self, c )
         self.tf = tf
-        self.weights = weights.split(',') if weights else [None,None]
+        self.weights = weights.split(',') if weights else list([None,None])
         self.device = self.get_device_name(device_name) if self.tf else None
         self.model_parameters={}
 
@@ -970,8 +970,9 @@ class GANModelBuilder(ModelBuilder):
     def build_model(self):
         m = GANModel(**self.model_parameters)
         if self.weights:
-            for mm,w in zip(m.models, weights):
-                mm.load_weights( w )
+            for mm,w in zip(m.models, self.weights):
+                if w: mm.load_weights( w )
+        return m
 
     def get_device_name(self, device):
         """Returns a TF-style device identifier for the specified device.
