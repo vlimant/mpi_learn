@@ -37,13 +37,20 @@ class Data(object):
         import os
         if os.environ.get('GANINMEM',0):
             goes_to = os.environ.get('GANINMEM')
-            os.system('mkdir %s/'%goes_to)
+            os.system('mkdir %s '%goes_to)
+            os.system('rm %s/* -f'%goes_to) ## clean first if anything
             for fn in file_names:
                 relocate = goes_to+'/'+fn.split('/')[-1]
                 if not os.path.isfile( relocate ):
                     print ("copying %s to %s"%( fn , relocate))
                     if os.system('cp %s %s'%( fn ,relocate))==0:
                         relocated.append( relocate )
+                    else:
+                        print ("was enable to copy the file",fn,"to",relocate)
+                        relocated.append( fn ) ## use the initial one
+                else:
+                    relocated.append( relocate )
+                        
             self.file_names = relocated
         else:
             self.file_names = file_names
