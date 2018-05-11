@@ -936,7 +936,11 @@ class GANModel(MPIModel):
        num_events=2000
        num_data = 100000
        #sortedpath = 'SortedData/event_*.hdf5'
-       sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
+       if 'daint' in os.environ['HOST']:
+           sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
+       else:
+           sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
+    
        Test = False
        latent= self.latent_size
        m = 2
