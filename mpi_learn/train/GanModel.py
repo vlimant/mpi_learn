@@ -14,10 +14,13 @@ from keras import optimizers
 from keras.optimizers import RMSprop,SGD
 #from EcalEnergyGan import generator, discriminator
 import numpy as np
+import numpy.core.umath_tests as umath
 import time
 import socket
 import os
 import glob
+import h5py
+
 
 import keras.backend as K
 from keras.models import Model, Sequential
@@ -933,35 +936,37 @@ class GANModel(MPIModel):
         return np.asarray([epoch_disc_loss, epoch_gen_loss])
 
     def figure_of_merit(self, **args):
-       num_events=2000
-       num_data = 100000
-       #sortedpath = 'SortedData/event_*.hdf5'
-       if 'daint' in os.environ['HOST']:
-           sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
-       else:
-           sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
+        total = 0
+        num_events=2000
+        num_data = 100000
+        #sortedpath = 'SortedData/event_*.hdf5'
+        if 'daint' in os.environ['HOST']:
+            sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
+        else:
+            sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
     
-       Test = False
-       latent= self.latent_size
-       m = 2
-       var = {}
-       g =self.generator
-       energies, var = load_sorted(sortedpath)
-       for energy in energies:
-           var["index" + str(energy)]= var["energy" + str(energy)].shape[0]
-           total += var["index" + str(energy)]
+    
+        Test = False
+        latent= self.latent_size
+        m = 2
+        var = {}
+        g =self.generator
+        energies, var = load_sorted(sortedpath)
+        for energy in energies:
+            var["index" + str(energy)]= var["energy" + str(energy)].shape[0]
+            total += var["index" + str(energy)]
 
-       for energy in energies:
-           var["events_gan" + str(energy)] = generate(g, var["index" + str(energy)], latent, var["energy" + str(energy)]/100)
+        for energy in energies:
+            var["events_gan" + str(energy)] = generate(g, var["index" + str(energy)], latent, var["energy" + str(energy)]/100)
 
-       for energy in energies:
-          var["ecal_act"+ str(energy)] = np.sum(var["events_act" + str(energy)], axis = (1, 2, 3))
-          var["ecal_gan"+ str(energy)] = np.sum(var["events_gan" + str(energy)], axis = (1, 2, 3))
-          var["sumsx_act"+ str(energy)], var["sumsy_act"+ str(energy)], var["sumsz_act"+ str(energy)] = get_sums(var["events_act" + str(energy)])
-          var["sumsx_gan"+ str(energy)], var["sumsy_gan"+ str(energy)], var["sumsz_gan"+ str(energy)] = get_sums(var["events_gan" + str(energy)])
-          var["momentX_act" + str(energy)], var["momentY_act" + str(energy)], var["momentZ_act" + str(energy)]= get_moments(var["events_act" + str(energy)], var["sumsx_act"+ str(energy)], var["sumsy_act"+ str(energy)], var["sumsz_act"+ str(energy)], var["ecal_act"+ str(energy)], m)
-          var["momentX_gan" + str(energy)], var["momentY_gan" + str(energy)], var["momentZ_gan" + str(energy)] = get_moments(var["events_gan" + str(energy)], var["sumsx_gan"+ str(energy)], var["sumsy_gan"+ str(energy)], var["sumsz_gan"+ str(energy)], var["ecal_gan"+ str(energy)], m)
-       return metric4(var, energies, m)
+        for energy in energies:
+            var["ecal_act"+ str(energy)] = np.sum(var["events_act" + str(energy)], axis = (1, 2, 3))
+            var["ecal_gan"+ str(energy)] = np.sum(var["events_gan" + str(energy)], axis = (1, 2, 3))
+            var["sumsx_act"+ str(energy)], var["sumsy_act"+ str(energy)], var["sumsz_act"+ str(energy)] = get_sums(var["events_act" + str(energy)])
+            var["sumsx_gan"+ str(energy)], var["sumsy_gan"+ str(energy)], var["sumsz_gan"+ str(energy)] = get_sums(var["events_gan" + str(energy)])
+            var["momentX_act" + str(energy)], var["momentY_act" + str(energy)], var["momentZ_act" + str(energy)]= get_moments(var["events_act" + str(energy)], var["sumsx_act"+ str(energy)], var["sumsy_act"+ str(energy)], var["sumsz_act"+ str(energy)], var["ecal_act"+ str(energy)], m)
+            var["momentX_gan" + str(energy)], var["momentY_gan" + str(energy)], var["momentZ_gan" + str(energy)] = get_moments(var["events_gan" + str(energy)], var["sumsx_gan"+ str(energy)], var["sumsy_gan"+ str(energy)], var["sumsz_gan"+ str(energy)], var["ecal_gan"+ str(energy)], m)
+        return metric4(var, energies, m)
 
 
 
