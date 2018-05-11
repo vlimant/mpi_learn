@@ -70,7 +70,7 @@ else:
 
 print (tag,"is the option")
 
-files = filter(None,open('train_3d.list').read().split('\n'))
+files = list(filter(None,open('train_3d.list').read().split('\n')))
 if options.inmem:
     import os
     relocated = []
