@@ -248,7 +248,7 @@ def load_sorted(sorted_path):
     energies = []
     srt = {}
     for f in sorted_files:
-        energy = int(filter(str.isdigit, f)[:-1])
+        energy = int(list(filter(str.isdigit, f))[:-1])
         energies.append(energy)
         srtfile = h5py.File(f,'r')
         srt["events_act" + str(energy)] = np.array(srtfile.get('ECAL'))
