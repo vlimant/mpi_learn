@@ -252,7 +252,9 @@ def load_sorted(sorted_path):
     srt = {}
     for f in sorted_files:
         #energy = int(list(filter(str.isdigit, f))[:-1])
-        energy = int(''.join(list(filter(str.isdigit, f))[:-1]))
+        file_name=f[f.find('sorted_'):-1]
+        #energy = int(''.join(list(filter(str.isdigit, f))[:-1]))
+        energy = int(''.join(list(filter(str.isdigit, file_name))[:-1]))*10
         energies.append(energy)
         srtfile = h5py.File(f,'r')
         srt["events_act" + str(energy)] = np.array(srtfile.get('ECAL'))
@@ -945,13 +947,14 @@ class GANModel(MPIModel):
         else:
             sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
     
-    
+        sortedpath='/data/shared/3DGan/sorted_*'
         Test = False
         latent= self.latent_size
         m = 2
         var = {}
         g =self.generator
         energies, var = load_sorted(sortedpath)
+        print("GAN FOM: ", energies)  
         for energy in energies:
             var["index" + str(energy)]= var["energy" + str(energy)].shape[0]
             total += var["index" + str(energy)]
