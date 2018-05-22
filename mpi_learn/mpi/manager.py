@@ -317,7 +317,7 @@ class MPIKFoldManager(MPIManager):
     def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
                   val_list, num_masters=1, synchronous=False, callbacks=[], 
                   worker_callbacks=[], verbose=False, custom_objects={}):
-        self.comm_worl = comm
+        self.comm_world = comm
         self.comm_fold = None
         if NFolds == 1:
             ## make a regular MPIManager
@@ -331,7 +331,6 @@ class MPIKFoldManager(MPIManager):
             print ("There is less than one master+one worker per fold, this isnt' going to work")
             
         ## actually split further the work in folds
-        self.comm_worl = comm
         rank = comm.Get_rank()
         fold_num = int(rank * NFolds / comm.Get_size())
         self.comm_fold = comm.Split(fold_num)
