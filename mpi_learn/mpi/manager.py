@@ -3,6 +3,7 @@
 from __future__ import division
 import math
 from mpi4py import MPI
+import numpy as np
 
 from ..train.data import H5Data
 from ..utils import get_num_gpus
@@ -14,7 +15,7 @@ def get_master_ranks(comm, num_masters=1):
        Returns:
         a list of integers corresponding to the MPI ranks that will be assigned as masters"""
     if num_masters > 1:
-        return [0]+range(1, comm.Get_size(), (comm.Get_size()-1) // num_masters)
+        return [0]+list(range(1, comm.Get_size(), (comm.Get_size()-1) // num_masters))
     return [0]
 
 def get_worker_ranks(comm, num_masters=1):
@@ -50,16 +51,50 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     else:
         worker_id = -1
 
+    print ("gpu ranks",gpu_ranks)
+    print ("gpu limit",gpu_limit)
+
     # get_num_gpus will fail if CUDA is not installed, so we short circuit if 0 GPUs are requested
     if gpu_limit == 0:
         return 'cpu'
-    max_gpu = get_num_gpus() - 1
-    if gpu_limit > 0:
-        max_gpu = min( max_gpu, gpu_limit-1 )
-    if worker_id < 0:# or worker_id > max_gpu:
+    #max_gpu = get_num_gpus() - 1
+    #if gpu_limit > 0:
+    #    max_gpu = min( max_gpu, gpu_limit-1 )
+    #if worker_id < 0:# or worker_id > max_gpu:
+    #    return 'cpu'
+    #else:
+    #    return 'gpu%d' % (worker_id%(max_gpu+1))
+
+    def get_gpu_list(mem_lim = 1):
+        import gpustat
+        stats = gpustat.GPUStatCollection.new_query()
+        ids = list(map(lambda gpu: int(gpu.entry['index']), stats))
+        ratios = map(lambda gpu: float(gpu.entry['memory.used'])/float(gpu.entry['memory.total']), stats)
+        #used = list(map(lambda gpu: float(gpu.entry['memory.used']), stats))
+        #unused_gpu = filter(lambda x: x[1] < 100.0, zip(ids, used))
+        print ("GPU usage",[gpu.entry for gpu in stats])
+        free = list(map(lambda gpu: float(gpu.entry['memory.total'])-float(gpu.entry['memory.used']), stats))
+        unused_gpu = list(filter(lambda x: x[1]  > mem_lim, zip(ids, free)))
+        print ("unused",unused_gpu)
+        return [x[0] for x in unused_gpu]
+
+    gpu_list = get_gpu_list()
+    print ("list of gpu",gpu_list)
+    print ("worker id",worker_id)
+    if worker_id < 0:
+        dev = 'gpu%d' % (gpu_list[0])
+        return dev
+
+    if len(gpu_list) == 0:
+        print("No free GPU available. Using CPU instead.")
         return 'cpu'
     else:
-        return 'gpu%d' % (worker_id%(max_gpu+1))
+        max_gpu = len(gpu_list)
+        dev = 'gpu%d' % (gpu_list[worker_id % (max_gpu)])
+        #print ("Found",dev,"free")
+        return dev
+                                                                                        
+            
 
 class MPIManager(object):
     """The MPIManager class defines the topology of the MPI process network
@@ -147,7 +182,7 @@ class MPIManager(object):
         # For masters we let child_comm be the communicator used to message the node's 
         # children, and parent_comm be that used to message the node's parents.
 
-        parent_rank = 0
+        self.parent_rank = 0
 
         # Case (1)
         if self.num_masters > 1:
@@ -156,7 +191,7 @@ class MPIManager(object):
                 parent_comm = self.comm_masters
                 if self.comm_masters.Get_rank() == 0: # rank 0 is the super-master
                     child_comm = self.comm_masters
-                    parent_rank = None
+                    self.parent_rank = None
                 else:
                     child_comm = self.comm_block
         # Case (2)
@@ -165,24 +200,43 @@ class MPIManager(object):
             if self.is_master:
                 parent_comm = self.comm_block
                 child_comm = self.comm_block
-                parent_rank = None
+                self.parent_rank = None
 
         # Process initialization
         from .process import MPIWorker, MPIMaster
         if self.is_master:
             self.set_val_data()
             num_sync_workers = self.get_num_sync_workers(child_comm)
-            self.process = MPIMaster( parent_comm, parent_rank=parent_rank, 
+            self.process = MPIMaster( parent_comm, parent_rank=self.parent_rank, 
                     data=self.data, algo=self.algo, model_builder=self.model_builder, 
                     child_comm=child_comm, num_epochs=self.num_epochs, 
                     num_sync_workers=num_sync_workers, callbacks=self.callbacks, 
                     verbose=self.verbose, custom_objects=self.custom_objects)
         else:
             self.set_train_data()
-            self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=parent_rank, 
+            self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=self.parent_rank, 
                     num_epochs=self.num_epochs, data=self.data, algo=self.algo, 
                     model_builder=self.model_builder, callbacks=self.worker_callbacks, 
                     verbose=self.verbose, custom_objects=self.custom_objects)
+
+    def figure_of_merit(self):
+        ##if (self.comm_masters and self.comm_masters.Get_rank() == 0) or (self.comm_block.Get_rank() == 0):
+        if self.parent_rank is None:
+            ## only the uber-master returns a valid fom
+            return self.process.model.figure_of_merit()
+        else:
+            return None
+
+    def train(self):
+        if self.parent_rank is None:
+            ## start the uber master, as all over masters are self-started
+            ## check MPIProcess.__init__ 
+            #if self.parent_rank is not None:
+            # self.bcast_weights( self.parent_comm )
+            # self.train()
+            return self.process.train()
+        else:
+            return None
 
     def get_num_sync_workers(self, comm):
         """Returns the number of workers the master should wait for
@@ -258,3 +312,61 @@ class MPIManager(object):
         if self.comm_masters is not None:
             self.comm_masters.Free()
         
+
+class MPIKFoldManager(MPIManager):
+    def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
+                  val_list, num_masters=1, synchronous=False, callbacks=[], 
+                  worker_callbacks=[], verbose=False, custom_objects={}):
+        self.comm_worl = comm
+        self.comm_fold = None
+        if NFolds == 1:
+            ## make a regular MPIManager
+            self.manager = MPIManager(comm, data, algo, model_builder, num_epochs, train_list,
+                                      val_list, num_masters,
+                                      synchronous, callbacks,
+                                      worker_callbacks, verbose, custom_objects)
+            return
+        
+        if int(comm.Get_size() / float(NFolds))<=1:
+            print ("There is less than one master+one worker per fold, this isnt' going to work")
+            
+        ## actually split further the work in folds
+        self.comm_worl = comm
+        rank = comm.Get_rank()
+        fold_num = int(rank * NFolds / comm.Get_size())
+        self.comm_fold = comm.Split(fold_num)
+        print ("For node {}, with block rank {}, send in fold {}".format(MPI.COMM_WORLD.Get_rank(), rank, fold_num))
+        self.manager = None
+
+        if val_list:
+            print ("MPIKFoldManager would not expect to be given a validation list")
+        all_files = train_list+val_list
+        from sklearn.model_selection import KFold
+        folding = KFold(n_splits = NFolds)
+        folds = list(folding.split( all_files ))
+        train, test = folds[ fold_num ]
+        train_list_on_fold = list(np.asarray(all_files)[ train ])
+        val_list_on_fold = list(np.asarray(all_files)[ test ])
+        self.manager = MPIManager(self.comm_fold, data, algo, model_builder, num_epochs, train_list_on_fold,
+                                  val_list_on_fold, num_masters, synchronous, callbacks,
+                                  worker_callbacks, verbose, custom_objects)
+                
+    def train(self):
+        self.manager.train()
+    
+    def figure_of_merit(self):
+        fom = self.manager.figure_of_merit()
+        if self.comm_fold is not None:
+            foms = self.comm_world.allgather( fom )
+            # filter out the None values
+            foms = list(filter( None, foms))
+            ## make the average and rms
+            avg_fom = np.mean( foms )
+            std_fom = np.std( foms )
+            if self.comm_fold.Get_rank()==0:
+                print ("Figure of merits over {} folds is {}+/-{}".format( len(foms), avg_fom, std_fom))
+            return avg_fom
+        else:
+            if fom is not None:
+                print ("Figure of merits from single value {}".format( fom ))
+            return fom

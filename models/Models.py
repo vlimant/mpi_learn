@@ -23,18 +23,22 @@ def make_example_model():
     model.add(Activation("softmax"))
     return model
 
-def make_mnist_model():
+def make_mnist_model(**args):
     """MNIST ConvNet from keras/examples/mnist_cnn.py"""
     np.random.seed(1337)  # for reproducibility
     nb_classes = 10
     # input image dimensions
     img_rows, img_cols = 28, 28
     # number of convolutional filters to use
-    nb_filters = 32
+    nb_filters = args.get('nb_filters',32)
     # size of pooling area for max pooling
-    pool_size = (2, 2)
+    ps = args.get('pool_size',2)
+    pool_size = (ps,ps)
     # convolution kernel size
-    kernel_size = (3, 3)
+    ks = args.get('kernel_size',3)
+    kernel_size = args.(ks, ks)
+    do = args.get('drop_out', 0.25)
+    dense = args.get('dense', 128)
     if K.image_dim_ordering() == 'th':
         input_shape = (1, img_rows, img_cols)
     else:
@@ -47,11 +51,11 @@ def make_mnist_model():
     model.add(Convolution2D(nb_filters, kernel_size[0], kernel_size[1]))
     model.add(Activation('relu'))
     model.add(MaxPooling2D(pool_size=pool_size))
-    model.add(Dropout(0.25))
+    model.add(Dropout(do))
     model.add(Flatten())
-    model.add(Dense(128))
+    model.add(Dense(dense))
     model.add(Activation('relu'))
-    model.add(Dropout(0.5))
+    model.add(Dropout(do))
     model.add(Dense(nb_classes))
     model.add(Activation('softmax'))
     return model

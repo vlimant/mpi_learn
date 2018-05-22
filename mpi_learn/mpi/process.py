@@ -2,10 +2,13 @@
 
 import os,sys
 import numpy as np
+import socket
+import time
+
 from mpi4py import MPI
 
 from ..utils import Error, weights_from_shapes, shapes_from_weights
-
+from ..train.model import MPICallbacks
 ### Classes ###
 
 class MPIProcess(object):
@@ -54,6 +57,19 @@ class MPIProcess(object):
         self.model_builder = model_builder
         self.callbacks_list = callbacks
         self.verbose = verbose
+        ev = [
+            #'send',
+            #'receive',
+            #'mpi',
+            #'build',
+            #'bcast'
+            #'loss'
+        ]
+        for extra in ['send','receive','mpi','build','bcast','loss','update']:
+            attr = 'tell_%s'%extra
+            setattr( self, attr, bool(extra in ev))
+            print (attr, getattr(self, attr))
+                   
         self.custom_objects = custom_objects
 
         self.update = None
@@ -68,15 +84,26 @@ class MPIProcess(object):
 
     def build_model(self):
         """Builds the Keras model and updates model-related attributes"""
+
+        tell_me = self.tell_build
+        print("building model",socket.gethostname(),self.rank)
         self.model = self.model_builder.build_model()
-        self.compile_model()
+
+        if tell_me: print ("weight pre-compile",socket.gethostname(),self.rank)
         self.weights = self.model.get_weights()
-        self.weights_shapes = shapes_from_weights( self.weights )
-        self.update = weights_from_shapes( self.weights_shapes )
+        self.compile_model()
+        if tell_me: print ("getting weights",socket.gethostname(),self.rank)
+        self.weights = self.model.get_weights()
+        if tell_me: print ("formatting update")
+        self.update = self.model.format_update()
+        if tell_me: print ("done with model",socket.gethostname(),self.rank)
+        if tell_me: print ("moving on",socket.gethostname(),self.rank)
 
     def check_sanity(self):
         """Throws an exception if any model attribute has not been set yet."""
-        for par in ['model','weights_shapes','weights','update']:
+        for par in ['model',
+                    #'weights_shapes',
+                    'weights','update']:
             if not hasattr(self, par) or getattr(self, par) is None:
                 raise Error("%s not found!  Process %d does not seem to be set up correctly." % (par,self.rank))
 
@@ -90,18 +117,12 @@ class MPIProcess(object):
         if for_worker:
             for obj in remove_for_worker:
                 self.callbacks_list = [ c for c in self.callbacks_list 
-                        if not isinstance(c, obj) ]
-        self.model.set_history( cbks.History())
-        self.callbacks = cbks.CallbackList( self.callbacks_list + [self.model.history()] )
-
-        # it's possible to callback a different model than self
-        # (used by Sequential models)
-        if hasattr(self.model, 'callback_model') and self.model.callback_model():
-            self.callback_model = self.model.callback_model()
-        else:
-            self.callback_model = self.model
-        self.callbacks.set_model(self.callback_model)
-        self.callback_model.stop_training = False
+                                        if not isinstance(c, obj) ]
+                
+        self.model.set_history( cbks.History )
+        self.callback = MPICallbacks( self.callbacks_list )
+        ## do the handshake
+        self.callback.handle( self.model )
 
     def train(self):
         """To be implemented in derived classes"""
@@ -113,20 +134,17 @@ class MPIProcess(object):
             its weights using an mpi_learn optimizer."""
         print ("Process {0:d} compiling model".format(self.rank))
         self.algo.compile_model( self.model )
-
+        print ("compiled")
+        
     def print_metrics(self, metrics):
         """Display metrics computed during training or validation"""
-        names = self.model.metrics_names()
-        if len(names) == 1:
-            print "%s: %.3f" % (names[0],metrics)
-        else:
-            for name, metric in zip( names, metrics ):
-                print ("{0}: {1:.3f}".format(name,metric))
-            print ("")
+        self.model.print_metrics( metrics )
 
     def get_logs(self, metrics, val=False):
         """Get dictionary of logs computed during training.
             If val is True, appends 'val' to the beginning of each metric name"""
+        print ("Should not get here ever")
+        sys.exit(123)
         if val:
             return { 'val_'+name:np.asscalar(metric) for name, metric in 
                     zip( self.model.metrics_names(), metrics ) }
@@ -138,11 +156,17 @@ class MPIProcess(object):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
             -Sync time and model weights with parent"""
+        tell = self.tell_send
+        if tell: print (self.rank,"start send sequence",self.time_step)
         self.send_update(check_permission=True)
+        if tell: print ("update send")
         self.time_step = self.recv_time_step()
+        if tell: print ("new time step", self.time_step)
         self.recv_weights()
+        if tell: print ("weights received")
         self.algo.set_worker_model_weights( self.model, self.weights )
-
+        if tell: print ("end send sequence")
+        
     ### MPI-related functions below ###
 
     # This dict associates message strings with integers to be passed as MPI tags.
@@ -193,8 +217,20 @@ class MPIProcess(object):
                 raise Error("Attempting to receive %s from parent, but parent rank is None" % tag)
             source = self.parent_rank 
         tag_num = self.lookup_mpi_tag(tag)
+        if tag == 'history':
+            obj = comm.recv( source=source, tag=tag_num, status=status )
+            return obj
         if buffer:
-            comm.Recv( obj, source=source, tag=tag_num, status=status )
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            comm.Recv( sub_o, source=source, tag=tag_num, status=status )
+                    else:
+                        comm.Recv( o, source=source, tag=tag_num, status=status )
+            else:
+                if self.tell_mpi: print ("self.recv",type(obj))
+                comm.Recv( obj, source=source, tag=tag_num, status=status )
             return obj
         else:
             obj = comm.recv( source=source, tag=tag_num, status=status )
@@ -215,10 +251,29 @@ class MPIProcess(object):
                 raise Error("Attempting to send %s to parent, but parent rank is None" % tag)
             dest = self.parent_rank
         tag_num = self.lookup_mpi_tag(tag)
-        if buffer:
-            comm.Send( obj, dest=dest, tag=tag_num )
-        else:
+        if tag == 'history':
             comm.send( obj, dest=dest, tag=tag_num )
+            return
+        if buffer:
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            comm.Send( sub_o, dest=dest, tag=tag_num )
+                    else:
+                        comm.Send( o, dest=dest, tag=tag_num )
+            else:
+                comm.Send( obj, dest=dest, tag=tag_num )
+        else:
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            comm.Send( sub_o, dest=dest, tag=tag_num )
+                    else:
+                        comm.Send( o, dest=dest, tag=tag_num )
+            else:
+                comm.send( obj, dest=dest, tag=tag_num )
 
     def bcast(self, obj, root=0, buffer=False, comm=None):
         """Wrapper around MPI.bcast/Bcast.  Returns the broadcasted object.
@@ -231,7 +286,16 @@ class MPIProcess(object):
         if comm is None:
             comm = self.parent_comm
         if buffer:
-            comm.Bcast( obj, root=root )
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            if self.tell_bcast: print ("BC",type(sub_o))
+                            comm.Bcast( sub_o, root=root )
+                    else:
+                        comm.Bcast(o, root=root )
+            else:
+                comm.Bcast( obj, root=root )
         else:
             obj = comm.bcast( obj, root=root )
             return obj
@@ -247,7 +311,7 @@ class MPIProcess(object):
             if hasattr(self, 'histories'):
                 self.send( obj=self.histories, tag='history' )
             else:
-                self.send( obj=self.model.history().history, tag='history' )
+                self.send( obj=self.model.history(), tag='history' )
 
     def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, check_permission=False):
         """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
@@ -261,18 +325,32 @@ class MPIProcess(object):
             self.send_time_step( comm=comm, dest=dest )
             decision = self.recv_bool( comm=comm, source=dest )
             if not decision: return
-        for w in obj:
-            self.send( w, tag, comm=comm, dest=dest, buffer=True )
+        tell=self.tell_mpi
+        if tell: print ("send_arrays [1]",type(obj))
+        for o in obj:
+            if tell: print ("send_arrays [2]",type(o))
+            if type(o) == list:
+                for w in o:
+                    self.send( w, tag, comm=comm, dest=dest, buffer=True )
+            else:
+                self.send( o, tag, comm=comm, dest=dest, buffer=True )
 
     def send_weights(self, comm=None, dest=None, check_permission=False):
         """Send NN weights to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the weights we first send the tag 'begin_weights'."""
+        if self.tell_send:
+            print (self.rank,"sending",np.ravel(self.weights[0][0])[:10])
+            print (self.rank,"sending",np.ravel(self.weights[1][0])[:10])
+            time.sleep( self.rank*5)
         self.send_arrays( self.weights, expect_tag='begin_weights', tag='weights', 
                 comm=comm, dest=dest, check_permission=check_permission )
 
     def send_update(self, comm=None, dest=None, check_permission=False):
         """Send update to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the update we first send the tag 'begin_update'"""
+        if self.tell_send:
+            print (self.rank,"sending update",np.ravel(self.update[0][0])[:10])
+            print (self.rank,"sending update",np.ravel(self.update[1][0])[:10])
         self.send_arrays( self.update, expect_tag='begin_update', tag='update', 
                 comm=comm, dest=dest, check_permission=check_permission )
 
@@ -290,18 +368,33 @@ class MPIProcess(object):
               tag: MPI tag accompanying the message
               add_to_existing: if true, add to existing object instead of replacing"""
         if add_to_existing:
+            print ("this needs some work")
             tmp = weights_from_shapes( [ w.shape for w in obj ] )
             self.recv_arrays( tmp, tag=tag, comm=comm, source=source )
             for i in range(len(obj)):
                 obj[i] += tmp[i]
             return
-        for w in obj:
-            self.recv( w, tag, comm=comm, source=source, buffer=True )
+        tell=self.tell_mpi        
+        if tell: print ("recv_arrays [1]",type(obj))
+        for o in obj:
+            if tell: print ("recv_arrays [2]",type(o))
+            if type(o) == list:
+                for w in o:
+                    self.recv( w, tag, comm=comm, source=source, buffer=True )
+            else:
+                self.recv( o, tag, comm=comm, source=source, buffer=True )
 
     def recv_weights(self, comm=None, source=None, add_to_existing=False):
         """Receive NN weights layer by layer from the process specified by comm and source"""
+        if self.tell_receive:
+            print (self.rank,"before receiving",np.ravel(self.weights[0][0])[:10])
+            print (self.rank,"before receiving",np.ravel(self.weights[1][0])[:10])
+            time.sleep( self.rank*5)        
         self.recv_arrays( self.weights, tag='weights', comm=comm, source=source,
                 add_to_existing=add_to_existing )
+        if self.tell_receive:
+            print (self.rank,"after receiving",np.ravel(self.weights[0][0])[:10])
+            print (self.rank,"after receiving",np.ravel(self.weights[1][0])[:10])
 
     def recv_update(self, comm=None, source=None, add_to_existing=False):
         """Receive an update layer by layer from the process specified by comm and source.
@@ -323,12 +416,14 @@ class MPIProcess(object):
     def bcast_weights(self, comm, root=0):
         """Broadcast weights shape and weights (layer by layer) 
             on communicator comm from the indicated root rank"""
-        self.weights_shapes = self.bcast( 
-                self.weights_shapes, comm=comm, root=root )
-        if self.weights is None:
-            self.weights = weights_from_shapes( self.weights_shapes )
-        for w in self.weights:
-            self.bcast( w, comm=comm, root=root, buffer=True )
+        #self.weights_shapes = self.bcast( 
+        #        self.weights_shapes, comm=comm, root=root )
+        #if self.weights is None:
+        #    self.weights = weights_from_shapes( self.weights_shapes )
+        #for w in self.weights:
+        #    self.bcast( w, comm=comm, root=root, buffer=True )
+        if self.tell_bcast: print(self.rank,"bcasting weights")
+        self.bcast( self.weights, comm=comm, root=root, buffer=True )
 
 
 class MPIWorker(MPIProcess):
@@ -353,39 +448,47 @@ class MPIWorker(MPIProcess):
         """
         self.check_sanity()
         self.init_callbacks(for_worker=True)
-        self.callbacks.on_train_begin()
+        #self.callbacks.on_train_begin()
+        self.callback.on_train_begin()
         self.await_signal_from_parent()
 
         # periodically check this request to see if the parent has told us to stop training
         exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
             print ("MPIWorker {0:d} beginning epoch {1:d}".format(self.rank, epoch))
-            self.callbacks.on_epoch_begin(epoch)
-            epoch_metrics = [ 0.0 for i in range( len(self.model.metrics_names()) ) ]
+            #self.callbacks.on_epoch_begin(epoch)
+            self.callback.on_epoch_begin(epoch)
+            epoch_metrics = np.zeros((1,))
             i_batch = 0
             for i_batch, batch in enumerate(self.data.generate_data()):
-                self.callbacks.on_batch_begin(i_batch)
+                #self.callbacks.on_batch_begin(i_batch)
+                self.callback.on_batch_begin(i_batch)
                 train_metrics = self.train_on_batch(batch)
-                batch_logs = self.get_logs(train_metrics)
-                for i in range(len(train_metrics)):
-                    epoch_metrics[i] += train_metrics[i]
+                #batch_logs = self.get_logs(train_metrics)
+                batch_logs = self.model.get_logs(train_metrics)
+                if epoch_metrics.shape != train_metrics.shape:
+                    epoch_metrics = np.zeros( train_metrics.shape)
+                epoch_metrics += train_metrics
                 if self.algo.should_sync():
                     self.compute_update()
                     self.do_send_sequence()
-                self.callbacks.on_batch_end(i_batch, batch_logs)
+                #self.callbacks.on_batch_end(i_batch, batch_logs)
+                self.callback.on_batch_end(i_batch, batch_logs)
                 if exit_request.Test():
                     self.stop_training = True
                     print ("MPIWorker {0:d} received exit request from master".format(self.rank))
                     break
             if self.stop_training:
                 break
-            epoch_metrics = [ m * 1.0 / (i_batch+1) for m in epoch_metrics ]
+            ## broken
+            epoch_metrics = epoch_metrics * (1.0/ (i_batch+1))
             print ("Worker {0:d} average metrics:".format(self.rank))
-            self.print_metrics(epoch_metrics)
-            self.callbacks.on_epoch_end(epoch, self.get_logs(epoch_metrics)) 
+            self.model.print_metrics(epoch_metrics)
+            #self.callbacks.on_epoch_end(epoch, self.get_logs(epoch_metrics))
+            self.callback.on_epoch_end(epoch, metrics = epoch_metrics)
         print ("MPIWorker {0:d} signing off".format(self.rank))
         self.send_exit_to_parent()
-        self.callbacks.on_train_end()
+        self.callback.on_train_end()
         self.send_history_to_parent()
 
     def train_on_batch(self, batch):
@@ -394,6 +497,8 @@ class MPIWorker(MPIProcess):
         if self.verbose:
             print ("Worker {0:d} metrics:".format(self.rank))
             self.print_metrics(train_loss)
+        if self.tell_loss:
+            print (self.rank,"loss",train_loss) 
         return train_loss
 
     def compute_update(self):
@@ -497,13 +602,18 @@ class MPIMaster(MPIProcess):
                     self.apply_update()
                     self.sync_parent()
                     self.sync_children()
-                self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
+                #print ("not resseting the update variables")
+                #self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
+                ## should we remove this ???JR
+                self.update = self.model.format_update()
             if (self.algo.validate_every > 0 and 
                     self.time_step % self.algo.validate_every == 0 and self.time_step > 0):
                 epoch_logs = self.validate()
-                self.callbacks.on_epoch_end(self.epoch, epoch_logs)
+                #self.callbacks.on_epoch_end(self.epoch, epoch_logs)
+                self.callback.on_epoch_end(self.epoch, logs = epoch_logs)
                 self.epoch += 1
-                self.callbacks.on_epoch_begin(self.epoch)
+                #self.callbacks.on_epoch_begin(self.epoch)
+                self.callback.on_epoch_begin(self.epoch)
         else:
             self.sync_child(source)
 
@@ -545,7 +655,8 @@ class MPIMaster(MPIProcess):
         self.check_sanity()
         self.bcast_weights( comm=self.child_comm )
         self.init_callbacks(for_worker=self.has_parent)
-        self.callbacks.on_train_begin()
+        #self.callbacks.on_train_begin()
+        self.callback.on_train_begin()
         self.signal_children()
 
         status = MPI.Status()
@@ -553,11 +664,12 @@ class MPIMaster(MPIProcess):
         self.waiting_workers_list = []
         
         self.epoch = 0
-        self.callbacks.on_epoch_begin(self.epoch)
+        #self.callbacks.on_epoch_begin(self.epoch)
+        self.callback.on_epoch_begin(self.epoch)
         while self.running_workers:
             self.recv_any_from_child(status)
             self.process_message( status )
-            if (not self.stop_training) and self.callback_model.stop_training:
+            if (not self.stop_training) and self.callback.stop_training():#_model.stop_training:
                 self.shut_down_workers()
                 self.stop_training = True
         print ("MPIMaster {0:d} done training".format(self.rank))
@@ -565,37 +677,64 @@ class MPIMaster(MPIProcess):
         # (this happens if the batch size does not divide the dataset size)
         if self.epoch < self.num_epochs:
             epoch_logs = self.validate()
-            self.callbacks.on_epoch_end(self.epoch, epoch_logs)
-        self.histories[str(self.rank)] = self.model.history().history
+            #self.callbacks.on_epoch_end(self.epoch, epoch_logs)
+            self.callback.on_epoch_end(self.epoch, epoch_logs)
+        self.histories[str(self.rank)] = self.model.history()
         self.send_exit_to_parent()
-        self.callbacks.on_train_end()
+        #self.callbacks.on_train_end()
+        self.callback.on_train_end()
         self.send_history_to_parent()
+        self.algo.save()
         if not self.has_parent:
             return self.histories
 
     def validate(self):
         """Compute the loss on the validation data.
             Return a dictionary of validation metrics."""
+        tell = True
         if self.has_parent:
             return {}
         self.model.set_weights(self.weights)
-
-        val_metrics = [ 0.0 for i in range( len(self.model.metrics_names()) ) ]
+        if tell: print ("Starting validation")
+        #val_metrics = [ 0.0 for i in range( len(self.model.metrics_names()) ) ]
+        val_metrics = np.zeros((1,))
         i_batch = 0
         for i_batch, batch in enumerate(self.data.generate_data()):
             #new_val_metrics = self.model.test_on_batch(*batch)
             new_val_metrics = self.model.test_on_batch(x=batch[0], y =batch[1] )
-            for i in range(len(val_metrics)):
-                val_metrics[i] += new_val_metrics[i]
-        val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
+            if val_metrics.shape != new_val_metrics.shape:
+                val_metrics =  np.zeros(new_val_metrics.shape)
+            val_metrics += new_val_metrics
+            #for i in range(len(val_metrics)):
+            #    val_metrics[i] += new_val_metrics[i]
+        #val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
+        val_metrics = val_metrics * (1.0/(i_batch+1))
         print ("Validation metrics:")
         self.print_metrics(val_metrics)
-        return self.get_logs(val_metrics, val=True)
+        #return self.get_logs(val_metrics, val=True)
+        l = self.callback.get_logs(val_metrics, val=True)
+        if tell: print ("Ending validation")        
+        return l 
+        # return self.callback.get_logs(val_metrics, val=True)
 
     def apply_update(self):
         """Updates weights according to update received from worker process"""
-        self.weights = self.algo.apply_update( self.weights, self.update )
-
+        if self.tell_update:
+            print ("rank",self.rank,"applying weights")
+            print (self.rank,"weights",np.ravel(self.weights[0][0])[:10])
+            print (self.rank,"weights",np.ravel(self.weights[1][0])[:10])
+            print (self.rank,"update",np.ravel(self.update[0][0])[:10])
+            print (self.rank,"update",np.ravel(self.update[1][0])[:10])
+        with np.errstate( divide='raise', 
+                          invalid='raise', 
+                          over='raise',
+                          #under ='raise'## might not be too bad
+                      ):
+            self.weights = self.algo.apply_update( self.weights, self.update )
+        if self.tell_update:
+            print (self.rank,"new weights",np.ravel(self.weights[0][0])[:10])
+            print (self.rank,"new weights",np.ravel(self.weights[1][0])[:10])
+        
     ### MPI-related functions below
 
     def signal_children(self):
