@@ -36,7 +36,7 @@ def make_mnist_model(**args):
     pool_size = (ps,ps)
     # convolution kernel size
     ks = args.get('kernel_size',3)
-    kernel_size = args.(ks, ks)
+    kernel_size = (ks, ks)
     do = args.get('drop_out', 0.25)
     dense = args.get('dense', 128)
     if K.image_dim_ordering() == 'th':
