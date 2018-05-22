@@ -75,10 +75,12 @@ if __name__ == '__main__':
     # In the theano case it is necessary to specify the device before importing.
     device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
                 gpu_for_master=args.master_gpu)
+    hide_device = True
     if args.tf: 
         backend = 'tensorflow'
-        os.environ['CUDA_VISIBLE_DEVICES'] = device[-1]
-        print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'])
+        if hide_device:
+            os.environ['CUDA_VISIBLE_DEVICES'] = device[-1] if 'gpu' in device else ''
+            print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'])
     else:
         backend = 'theano'
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
@@ -89,22 +91,23 @@ if __name__ == '__main__':
     import keras.callbacks as cbks
     import keras.backend as K
     if args.tf:
+        gpu_options=K.tf.GPUOptions(
+            per_process_gpu_memory_fraction=0.1, #was 0.0
+            allow_growth = True,
+            visible_device_list = device[-1] if 'gpu' in device else '')
+        if hide_device:
+            gpu_options=K.tf.GPUOptions(
+                            per_process_gpu_memory_fraction=0.0,
+                            allow_growth = True,)        
         K.set_session( K.tf.Session( config=K.tf.ConfigProto(
             allow_soft_placement=True, log_device_placement=False,
-            gpu_options=K.tf.GPUOptions(
-                per_process_gpu_memory_fraction=0.0, allow_growth = True,
-                visible_device_list = os.environ['CUDA_VISIBLE_DEVICES']) ) ) )
-
+            gpu_options=gpu_options
+            ) ) )
     if args.tf:
-        #model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=args.model_weights)
-        from mpi_learn.train.GanModel import GANModelBuilder
-        model_builder  = GANModelBuilder( comm , device_name=device, tf= True)
+        model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=args.model_weights)
         print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
     else:
-        #model_builder = ModelFromJson( comm, args.model_json ,weights=args.model_weights)
-        #model_builder = ModelFromJson( comm, [args.model_json, args.model_json] ,weights=args.model_weights)
-        from mpi_learn.train.GanModel import GANModelBuilder
-        model_builder  = GANModelBuilder( comm , device_name=device)
+        model_builder = ModelFromJson( comm, args.model_json ,weights=args.model_weights)
         print ("Process {0} using device {1}".format(comm.Get_rank(),device))
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
         # GPU ops need to be executed synchronously in order for profiling to make sense
