@@ -947,14 +947,15 @@ class GANModel(MPIModel):
         else:
             sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
     
-        sortedpath='/data/shared/3DGan/sorted_*'
+        #sortedpath='/data/shared/3DGan/sorted_*'
         Test = False
         latent= self.latent_size
         m = 2
         var = {}
         g =self.generator
         energies, var = load_sorted(sortedpath)
-        print("GAN FOM: ", energies)  
+        if not energies:
+           raise ValueError('No sorted file found')
         for energy in energies:
             var["index" + str(energy)]= var["energy" + str(energy)].shape[0]
             total += var["index" + str(energy)]
