@@ -15,7 +15,7 @@ def get_master_ranks(comm, num_masters=1):
        Returns:
         a list of integers corresponding to the MPI ranks that will be assigned as masters"""
     if num_masters > 1:
-        return [0]+list(range(1, comm.Get_size(), (comm.Get_size()-1) // num_masters))
+        return [0]+list(range(1, comm.Get_size(), (comm.Get_size()-1) // (num_masters-1)))
     return [0]
 
 def get_worker_ranks(comm, num_masters=1):
@@ -153,8 +153,8 @@ class MPIManager(object):
         self.model_builder = model_builder
         self.num_masters = num_masters
         self.num_workers = comm.Get_size() - self.num_masters 
-        if self.num_masters > 1:
-            self.num_workers -= 1 # one process is taken up by the super-master
+        #if self.num_masters > 1:
+        #    self.num_workers -= 1 # one process is taken up by the super-master
         self.worker_id = -1
 
         self.num_epochs = num_epochs
@@ -280,7 +280,7 @@ class MPIManager(object):
         ranks_excludefirstprocess = range(1,comm.Get_size()) 
         comm_excludefirstprocess = comm.Create( comm.Get_group().Incl( ranks_excludefirstprocess ) )
         if comm.Get_rank() in ranks_excludefirstprocess:
-            size_block = (comm.Get_size()-1) // self.num_masters
+            size_block = (comm.Get_size()-1) // (self.num_masters-1)
             color_block = comm_excludefirstprocess.Get_rank() // size_block
             self.comm_block = comm_excludefirstprocess.Split( color_block )
             comm_excludefirstprocess.Free()
