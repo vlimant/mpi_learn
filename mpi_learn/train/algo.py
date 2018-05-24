@@ -129,7 +129,7 @@ class Algo(object):
                     new_w = cur_w - self.elastic_force * np.subtract( cur_w, other_w )
                     new_weights[-1].append( new_w )
             else:
-                new_w = cur_w - self.elastic_force * np.subtract( m_w, om_w )
+                new_w = m_w - self.elastic_force * np.subtract( m_w, om_w )
                 new_weights.append( new_w )
         return new_weights
 
