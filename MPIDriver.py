@@ -38,6 +38,7 @@ if __name__ == '__main__':
 
     # configuration of network topology
     parser.add_argument('--masters', help='number of master processes', default=1, type=int)
+    parser.add_argument('--processes', help='number of processes per worker', default=1, type=int)
     parser.add_argument('--max-gpus', dest='max_gpus', help='max GPUs to use', 
             type=int, default=-1)
     parser.add_argument('--master-gpu',help='master process should get a gpu',
@@ -145,9 +146,10 @@ if __name__ == '__main__':
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
-            num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
-            num_masters=args.masters, synchronous=args.synchronous, 
-            callbacks=callbacks, verbose=args.verbose )
+                          num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
+                          num_masters=args.masters, num_processes=args.processes,
+                          synchronous=args.synchronous, 
+                          callbacks=callbacks, verbose=args.verbose )
 
     # Process 0 launches the training procedure
     if comm.Get_rank() == 0:

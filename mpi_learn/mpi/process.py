@@ -34,7 +34,7 @@ class MPIProcess(object):
            stop_training: becomes true when it is time to stop training
     """
 
-    def __init__(self, parent_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
+    def __init__(self, parent_comm, process_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
             model_builder=None, callbacks=[], verbose=False, custom_objects={}):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, training should be launched with train().
@@ -49,7 +49,8 @@ class MPIProcess(object):
               callbacks: list of keras callbacks
               verbose: whether to print verbose output
         """
-        self.parent_comm = parent_comm 
+        self.parent_comm = parent_comm
+        self.process_comm = process_comm
         self.parent_rank = parent_rank
         self.num_epochs = num_epochs
         self.data = data
@@ -76,11 +77,15 @@ class MPIProcess(object):
         self.stop_training = False
         self.time_step = 0
 
-        self.rank = parent_comm.Get_rank()
+        self.rank = parent_comm.Get_rank() if parent_comm else 0
         self.build_model()
-        if self.parent_rank is not None:
+        if self.parent_rank is not None and self.parent_comm is not None:
             self.bcast_weights( self.parent_comm )
             self.train()
+
+    def is_shadow(self):
+        """signals that the process is a sub-process and should not act normally"""
+        return (self.process_comm is not None and self.process_comm.Get_rank()!=0)
 
     def build_model(self):
         """Builds the Keras model and updates model-related attributes"""
@@ -156,6 +161,7 @@ class MPIProcess(object):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
             -Sync time and model weights with parent"""
+        if self.is_shadow(): return
         tell = self.tell_send
         if tell: print (self.rank,"start send sequence",self.time_step)
         self.send_update(check_permission=True)
@@ -219,6 +225,9 @@ class MPIProcess(object):
         tag_num = self.lookup_mpi_tag(tag)
         if tag == 'history':
             obj = comm.recv( source=source, tag=tag_num, status=status )
+            return obj
+        if tag in ['bool','time']:
+            comm.Recv(obj, source=source, tag=tag_num, status=status )
             return obj
         if buffer:
             if type(obj) == list:
@@ -301,11 +310,13 @@ class MPIProcess(object):
             return obj
 
     def send_exit_to_parent(self):
+        if self.is_shadow():return
         """Send exit tag to parent process, if parent process exists"""
         if self.parent_rank is not None:
             self.send( None, 'exit' )
 
     def send_history_to_parent(self):
+        if self.is_shadow():return        
         """Send keras history or dict of keras histories"""
         if self.parent_rank is not None:
             if hasattr(self, 'histories'):
@@ -336,6 +347,7 @@ class MPIProcess(object):
                 self.send( o, tag, comm=comm, dest=dest, buffer=True )
 
     def send_weights(self, comm=None, dest=None, check_permission=False):
+        if self.is_shadow():return        
         """Send NN weights to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the weights we first send the tag 'begin_weights'."""
         if self.tell_send:
@@ -346,6 +358,7 @@ class MPIProcess(object):
                 comm=comm, dest=dest, check_permission=check_permission )
 
     def send_update(self, comm=None, dest=None, check_permission=False):
+        if self.is_shadow():return        
         """Send update to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the update we first send the tag 'begin_update'"""
         if self.tell_send:
@@ -355,10 +368,12 @@ class MPIProcess(object):
                 comm=comm, dest=dest, check_permission=check_permission )
 
     def send_time_step(self, comm=None, dest=None):
+        if self.is_shadow():return        
         """Send the current time step"""
         self.send( obj=self.time_step, tag='time', dest=dest, comm=comm )
 
     def send_bool(self, obj, comm=None, dest=None):
+        if self.is_shadow():return        
         self.send( obj=obj, tag='bool', dest=dest, comm=comm )
 
     def recv_arrays(self, obj, tag, comm=None, source=None, add_to_existing=False):
@@ -386,6 +401,7 @@ class MPIProcess(object):
 
     def recv_weights(self, comm=None, source=None, add_to_existing=False):
         """Receive NN weights layer by layer from the process specified by comm and source"""
+        if self.is_shadow():return        
         if self.tell_receive:
             print (self.rank,"before receiving",np.ravel(self.weights[0][0])[:10])
             print (self.rank,"before receiving",np.ravel(self.weights[1][0])[:10])
@@ -400,14 +416,17 @@ class MPIProcess(object):
         """Receive an update layer by layer from the process specified by comm and source.
             Add it to the current update if add_to_existing is True, 
             otherwise overwrite the current update"""
+        if self.is_shadow():return        
         self.recv_arrays( self.update, tag='update', comm=comm, source=source,
                 add_to_existing=add_to_existing )
 
     def recv_time_step(self, comm=None, source=None):
         """Receive the current time step"""
+        if self.is_shadow():return        
         return self.recv( tag='time', comm=comm, source=source )
 
     def recv_bool(self, comm=None, source=None):
+        if self.is_shadow():return        
         return self.recv( tag='bool', comm=comm, source=source )
 
     def recv_exit_from_parent(self):
@@ -426,18 +445,23 @@ class MPIProcess(object):
         self.bcast( self.weights, comm=comm, root=root, buffer=True )
 
 
+                
 class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
-    def __init__(self, data, algo, model_builder, parent_comm, parent_rank=None, 
+    def __init__(self, data, algo, model_builder, process_comm, parent_comm, parent_rank=None, 
             num_epochs=1, callbacks=[], verbose=False, custom_objects={}):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
         if parent_rank is None:
             raise Error("MPIWorker initialized without parent rank")
-        info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
-        print (info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size()))
-        super(MPIWorker, self).__init__( parent_comm, parent_rank, 
+        info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}"
+        tell_comm = parent_comm if parent_comm is not None else process_comm
+        print (info.format(tell_comm.Get_rank(),
+                           parent_rank,
+                           tell_comm.Get_size()))
+
+        super(MPIWorker, self).__init__( parent_comm, process_comm, parent_rank,
                 num_epochs=num_epochs, data=data, algo=algo, model_builder=model_builder,
                 callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
 
@@ -508,6 +532,29 @@ class MPIWorker(MPIProcess):
     def await_signal_from_parent(self):
         """Wait for 'train' signal from parent process"""
         self.recv( tag='train' )
+
+class HRVMPIWorker(MPIWorker):
+    """This class is making an mpi group look like an MPIWorker."""
+    def __init__(self,data, algo, model_builder, parent_comm, parent_rank=None,
+                 num_epochs=1, callbacks=[], verbose=False, custom_objects={}):
+        super(HRVMPIWorker, self).__init__( data, algo, model_builder, parent_comm, parent_rank,
+                                            num_epochs, callbacks, verbose, custom_objects)
+        self.hrv_comm = None
+        
+        ## all below are making the rank-0 of the group behave like if it had trained by itself
+        def compute_update(self):
+            if self.hrv_comm.Get_rank()==0:
+                super(HRVMPIWorker, self).compute_update()
+
+        def send_exit_to_parent(self):
+            if self.hrv_comm.Get_rank()==0:
+                super(HRVMPIWorker, self).send_exit_to_parent()
+
+        def send_history_to_parent(self):
+            if self.hrv_comm.Get_rank()==0:
+                super(HRVMPIWorker, self).send_history_to_parent()
+
+
 
 class MPIMaster(MPIProcess):
     """This class sends model information to its worker processes and updates its model weights
