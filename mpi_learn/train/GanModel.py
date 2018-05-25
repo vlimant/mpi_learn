@@ -255,6 +255,7 @@ def load_sorted(sorted_path):
         file_name=f[f.find('sorted_'):-1]
         #energy = int(''.join(list(filter(str.isdigit, f))[:-1]))
         energy = int(''.join(list(filter(str.isdigit, file_name))[:-1]))*10
+        print ("found files for energy",energy)
         energies.append(energy)
         srtfile = h5py.File(f,'r')
         srt["events" + str(energy)] = np.array(srtfile.get('ECAL'))
@@ -952,7 +953,7 @@ class GANModel(MPIModel):
     def prepare_geant4_data(self, **args):
         total = 0
         #sortedpath = 'SortedData/event_*.hdf5'
-        if 'daint' in os.environ['HOST']:
+        if 'daint' in os.environ.get('HOST','') or 'daint' in os.environ.get('HOSTNAME',''):
             sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
         else:
             sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
