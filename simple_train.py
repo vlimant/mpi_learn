@@ -142,7 +142,8 @@ for e in range(nepochs):
                 losses = gm.train_on_batch(sub_X,sub_Y)
                 losses = [list(map(float,l)) for l in losses]
                 history[e].append( losses )
-
+            fom = gm.figure_of_merit()
+            print ("figure of merit",fom)
             start += bs
             end += bs
         gm.generator.save_weights('simple_generator_%s.h5'%tag)
