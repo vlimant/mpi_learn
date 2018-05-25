@@ -28,7 +28,7 @@ def get_data(datafile):
     return X, y, ecal
 
 dest='/data/shared/3DGAN/'
-if 'daint' in os.environ['HOST']:
+if 'daint' in os.environ.get('HOST', os.environ.get('HOSTNAME','')):
     dest='/scratch/snx3000/vlimant/3DGAN/'
 
 for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
