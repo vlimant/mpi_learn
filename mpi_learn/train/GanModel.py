@@ -249,9 +249,12 @@ def get_moments(images, sumsx, sumsy, sumsz, totalE, m):
 
 def load_sorted(sorted_path):
     sorted_files = sorted(glob.glob(sorted_path))
+
+    print ("found sorterd files",sorted( sorted_files))
     energies = []
     srt = {}
     for f in sorted_files:
+        print (f)
         #energy = int(list(filter(str.isdigit, f))[:-1])
         file_name=f[f.find('sorted_'):-1]
         #energy = int(''.join(list(filter(str.isdigit, f))[:-1]))
