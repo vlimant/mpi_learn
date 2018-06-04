@@ -226,6 +226,7 @@ def get_moments(images, sumsx, sumsy, sumsz, totalE, m):
     ECAL_midX = np.zeros(index)
     ECAL_midY = np.zeros(index)
     ECAL_midZ = np.zeros(index)
+    if (totalE.any() == 0): return momentX, momentY, momentZ
     for i in range(m):
       relativeIndices = np.tile(np.arange(ecal_size), (index,1))
       moments = np.power((relativeIndices.transpose()-ECAL_midX).transpose(), i+1)
@@ -952,7 +953,6 @@ class GANModel(MPIModel):
 
     def prepare_geant4_data(self, **args):
         total = 0
-        #sortedpath = 'SortedData/event_*.hdf5'
         if 'daint' in os.environ.get('HOST','') or 'daint' in os.environ.get('HOSTNAME',''):
             sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
         else:
@@ -978,7 +978,7 @@ class GANModel(MPIModel):
 
     def figure_of_merit(self, **args):
         if (not self.calculate_fom) :
-            raise ValueError('FOM not anabled: No Geant4 data calculated')
+            raise ValueError('FOM not enabled: No Geant4 data calculated')
         total = 0
         m = 2  #number of moments
         latent= self.latent_size
