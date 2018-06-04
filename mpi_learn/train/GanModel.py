@@ -959,7 +959,7 @@ class GANModel(MPIModel):
         if 'daint' in os.environ.get('HOST','') or 'daint' in os.environ.get('HOSTNAME',''):
             sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
         else:
-            sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
+            sortedpath = '/data/shared/3DGAN/sorted/sorted_*.hdf5'
 
         #sortedpath='/data/shared/3DGan/sorted_*'
         m = 2  #number of moments
