@@ -282,15 +282,15 @@ def metric(ganvar, g4var, energies, m):
      if (g4var['moms_x'+str(energy)].all() > 0.0) :
         posx_error = (g4var['moms_x'+str(energy)] - ganvar['moms_x'+str(energy)])/g4var['moms_x'+str(energy)]
      else:
-        raise ValueError('Image with NULL X moments!')
+        posx_error = 1.
      if (g4var['moms_y'+str(energy)].all() > 0.0) :
         posy_error = (g4var['moms_y'+str(energy)] - ganvar['moms_y'+str(energy)])/g4var['moms_y'+str(energy)]
      else:
-        raise ValueError('Image with NULL Y moments!')
+        posy_error = 1.
      if (g4var['moms_z'+str(energy)].all() > 0.0) :
         posz_error = (g4var['moms_z'+str(energy)] - ganvar['moms_z'+str(energy)])/g4var['moms_z'+str(energy)]
      else:
-        raise ValueError('Image with NULL Z moments!')
+        posz_error = 1.
      #Taking absolute of errors and adding for each axis then scaling by 3
      pos_error = (np.absolute(posx_error) + np.absolute(posy_error) + np.absolute(posz_error))/3
      #Summing over moments and dividing for number of moments
@@ -302,15 +302,18 @@ def metric(ganvar, g4var, energies, m):
      if (g4var['sumx'+str(energy)].all() > 0.0) :
         eprofilex_error = np.divide((g4var['sumx'+str(energy)] - ganvar['sumx'+str(energy)]), g4var['sumx'+str(energy)])
      else:
-        raise ValueError('Image with NULL energy!')
+        eprofilex_error  =1.
+        #raise ValueError('Image with NULL energy!')
      if (g4var['sumy'+str(energy)].all() > 0.0) :
         eprofiley_error = np.divide((g4var['sumy'+str(energy)] - ganvar['sumy'+str(energy)]), g4var['sumy'+str(energy)])
      else:
-        raise ValueError('Image with NULL energy!')
+        eprofiley_error  =1.
+        #raise ValueError('Image with NULL energy!')
      if (g4var['sumy'+str(energy)].all() > 0.0) :
         eprofilez_error = np.divide((g4var['sumz'+str(energy)] - ganvar['sumz'+str(energy)]), g4var['sumz'+str(energy)])
      else:
-        raise ValueError('Image with NULL energy!')
+        eprofilez_error  =1.
+        #raise ValueError('Image with NULL energy!')
      #Take absolute of error and mean for all events
      eprofilex_total = np.sum(np.absolute(eprofilex_error))/ecal_size
      eprofiley_total = np.sum(np.absolute(eprofiley_error))/ecal_size
