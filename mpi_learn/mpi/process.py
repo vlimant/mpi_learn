@@ -375,6 +375,7 @@ class MPIProcess(object):
     def send_time_step(self, comm=None, dest=None):
         if self.is_shadow():return        
         """Send the current time step"""
+        #print ("sending the time step", self.time_step, type(self.time_step))
         self.send( obj=self.time_step, tag='time', dest=dest, comm=comm )
 
     def send_bool(self, obj, comm=None, dest=None):
@@ -637,9 +638,12 @@ class MPIMaster(MPIProcess):
          -If we accept, we signal the worker and wait to receive the update.
          -After receiving the update, we determine whether to sync with the workers.
          -Finally we run validation if we have completed one epoch's worth of updates."""
-        self.algo.staleness = self.time_step - self.recv_time_step( 
-                source=source, comm=self.child_comm )
+        #print ("receiving a time step")
+        child_time = self.recv_time_step( source=source, comm=self.child_comm )
+        #print ("child time",child_time)
+        self.algo.staleness = self.time_step - child_time
         accepted = self.accept_update()
+        #print ("sending",accepted,"as accepted flag")
         self.send_bool( accepted, dest=source, comm=self.child_comm )
         if accepted:
             self.recv_update( source=source, comm=self.child_comm, 
@@ -719,6 +723,7 @@ class MPIMaster(MPIProcess):
         #self.callbacks.on_epoch_begin(self.epoch)
         self.callback.on_epoch_begin(self.epoch)
         while self.running_workers:
+            #print ("running workers",sorted(self.running_workers))
             self.recv_any_from_child(status)
             self.process_message( status )
             if (not self.stop_training) and self.callback.stop_training():#_model.stop_training:
