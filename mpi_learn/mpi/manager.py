@@ -237,7 +237,7 @@ class MPIManager(object):
         if self.comm_block is None:
             _ = comm.Create( comm.Get_group().Incl( [rank] ))
         if not self.is_master and self.comm_block:
-            self.worker_id = self.comm_block.Get_rank() - 1
+            self.worker_id = self.comm_block.Get_rank()
 
         print ("processes",processes)
         for pr in processes:
@@ -252,11 +252,13 @@ class MPIManager(object):
         if self.comm_instance:
             ids = self.comm_instance.allgather( self.worker_id )
             self.worker_id = list(filter(lambda i:i!=-1, ids))[0]
-            
+
         print ("master comm",self.comm_masters,(self.comm_masters.Get_size() if self.comm_masters else "N/A"))
         print ("block comm",self.comm_block,(self.comm_block.Get_size() if self.comm_block else "N/A"))
         print ("instance comm",self.comm_instance,(self.comm_instance.Get_size() if self.comm_instance else "N/A"))
-            
+        print ("worker id",self.worker_id)
+        print ("is master", self.is_master)
+        
         # Case (1)
         if self.num_masters > 1:
             if self.is_master:
@@ -328,7 +330,7 @@ class MPIManager(object):
         print ("number of files",len(self.train_list))
         #files_per_worker,_ = divmod(len(self.train_list),self.num_workers)
         #bounds = list(range(0,len(self.train_list), files_per_worker))
-        files_for_this_worker = [fn for  (i,fn) in enumerate(self.train_list) if i%self.num_workers==self.worker_id]
+        files_for_this_worker = [fn for  (i,fn) in enumerate(self.train_list) if i%self.num_workers==(self.worker_id-1)]
             
         #files_for_this_worker = self.train_list[ 
         #        self.worker_id*files_per_worker : (self.worker_id+1)*files_per_worker ]
