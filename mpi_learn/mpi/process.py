@@ -77,6 +77,8 @@ class MPIProcess(object):
         self.stop_training = False
         self.time_step = 0
 
+        self._is_shadow = (self.process_comm is not None and self.process_comm.Get_rank()!=0)
+        
         self.rank = parent_comm.Get_rank() if parent_comm else 0
         self.build_model()
         if self.parent_rank is not None and self.parent_comm is not None:
@@ -85,7 +87,7 @@ class MPIProcess(object):
 
     def is_shadow(self):
         """signals that the process is a sub-process and should not act normally"""
-        return (self.process_comm is not None and self.process_comm.Get_rank()!=0)
+        return self._is_shadow
 
     def build_model(self):
         """Builds the Keras model and updates model-related attributes"""
