@@ -337,7 +337,7 @@ class MPIManager(object):
         #    files_for_this_worker.append(self.train_list[ self.num_workers*files_per_worker + self.worker_id ])
 
             
-        print ("Files for worker {}:{}".format(self.comm_block.Get_rank() if self.comm_block else "N/A",
+        print ("Files for worker id{}, rank {}:{}".format(self.worker_id,self.comm_block.Get_rank() if self.comm_block else "N/A",
                                                self.comm_instance.Get_rank() if self.comm_instance else "N/A")
                )
 
