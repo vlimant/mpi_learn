@@ -228,9 +228,9 @@ class MPIProcess(object):
         if tag == 'history':
             obj = comm.recv( source=source, tag=tag_num, status=status )
             return obj
-        if tag in ['bool','time']:
-            comm.Recv(obj, source=source, tag=tag_num, status=status )
-            return obj
+        #if tag in ['bool','time']:
+        #    comm.Recv(obj, source=source, tag=tag_num, status=status )
+        #    return obj
         if buffer:
             if type(obj) == list:
                 for o in obj:
@@ -262,9 +262,12 @@ class MPIProcess(object):
                 raise Error("Attempting to send %s to parent, but parent rank is None" % tag)
             dest = self.parent_rank
         tag_num = self.lookup_mpi_tag(tag)
-        if tag == 'history':
+        if tag in ['history']:
             comm.send( obj, dest=dest, tag=tag_num )
             return
+        #if tag in ['time']:
+        #    comm.Send( obj, dest=dest, tag=tag_num )
+        #    return
         if buffer:
             if type(obj) == list:
                 for o in obj:
@@ -424,7 +427,7 @@ class MPIProcess(object):
 
     def recv_time_step(self, comm=None, source=None):
         """Receive the current time step"""
-        if self.is_shadow():return        
+        if self.is_shadow():return
         return self.recv( tag='time', comm=comm, source=source )
 
     def recv_bool(self, comm=None, source=None):
