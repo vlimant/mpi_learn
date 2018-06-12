@@ -226,7 +226,7 @@ def get_moments(images, sumsx, sumsy, sumsz, totalE, m):
     ECAL_midX = np.zeros(index)
     ECAL_midY = np.zeros(index)
     ECAL_midZ = np.zeros(index)
-    if (totalE.any() == 0): return momentX, momentY, momentZ
+    if (totalE==0).any(): return momentX, momentY, momentZ
     for i in range(m):
       relativeIndices = np.tile(np.arange(ecal_size), (index,1))
       moments = np.power((relativeIndices.transpose()-ECAL_midX).transpose(), i+1)
@@ -249,9 +249,12 @@ def get_moments(images, sumsx, sumsy, sumsz, totalE, m):
 
 def load_sorted(sorted_path):
     sorted_files = sorted(glob.glob(sorted_path))
+
+    print ("found sorterd files",sorted( sorted_files))
     energies = []
     srt = {}
     for f in sorted_files:
+        print (f)
         #energy = int(list(filter(str.isdigit, f))[:-1])
         file_name=f[f.find('sorted_'):-1]
         #energy = int(''.join(list(filter(str.isdigit, f))[:-1]))
@@ -959,7 +962,7 @@ class GANModel(MPIModel):
         if 'daint' in os.environ.get('HOST','') or 'daint' in os.environ.get('HOSTNAME',''):
             sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
         else:
-            sortedpath = '/data/shared/3DGAN/sorted/sorted/sorted_*.hdf5'
+            sortedpath = '/data/shared/3DGAN/sorted/sorted_*.hdf5'
 
         #sortedpath='/data/shared/3DGan/sorted_*'
         m = 2  #number of moments
