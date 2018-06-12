@@ -514,6 +514,8 @@ class MPIWorker(MPIProcess):
                     ## broadcast the weights to all processes
                     ## alternative is to load the broadcast callback from horovod and call it here
                     self.bcast_weights( comm=self.process_comm )
+                    if self.process_comm.Get_rank()!=0:
+                        self.model.set_weights(self.weights)
                 train_metrics = self.train_on_batch(batch)
                 #batch_logs = self.get_logs(train_metrics)
                 batch_logs = self.model.get_logs(train_metrics)
