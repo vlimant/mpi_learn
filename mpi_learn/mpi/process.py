@@ -458,12 +458,6 @@ class MPIProcess(object):
     def bcast_weights(self, comm, root=0):
         """Broadcast weights shape and weights (layer by layer) 
             on communicator comm from the indicated root rank"""
-        #self.weights_shapes = self.bcast( 
-        #        self.weights_shapes, comm=comm, root=root )
-        #if self.weights is None:
-        #    self.weights = weights_from_shapes( self.weights_shapes )
-        #for w in self.weights:
-        #    self.bcast( w, comm=comm, root=root, buffer=True )
         if self.tell_bcast: print(self.ranks,"bcasting weights")
         self.bcast( self.weights, comm=comm, root=root, buffer=True )
 
@@ -503,12 +497,10 @@ class MPIWorker(MPIProcess):
         exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
             print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, epoch))
-            #self.callbacks.on_epoch_begin(epoch)
             self.callback.on_epoch_begin(epoch)
             epoch_metrics = np.zeros((1,))
             i_batch = 0
             for i_batch, batch in enumerate(self.data.generate_data()):
-                #self.callbacks.on_batch_begin(i_batch)
                 self.callback.on_batch_begin(i_batch)
                 if self.process_comm:
                     ## broadcast the weights to all processes
@@ -517,7 +509,6 @@ class MPIWorker(MPIProcess):
                     if self.process_comm.Get_rank()!=0:
                         self.model.set_weights(self.weights)
                 train_metrics = self.train_on_batch(batch)
-                #batch_logs = self.get_logs(train_metrics)
                 batch_logs = self.model.get_logs(train_metrics)
                 if epoch_metrics.shape != train_metrics.shape:
                     epoch_metrics = np.zeros( train_metrics.shape)
@@ -525,7 +516,6 @@ class MPIWorker(MPIProcess):
                 if self.algo.should_sync():
                     self.compute_update()
                     self.do_send_sequence()
-                #self.callbacks.on_batch_end(i_batch, batch_logs)
                 self.callback.on_batch_end(i_batch, batch_logs)
                 if exit_request and exit_request.Test():
                     self.stop_training = True
@@ -541,7 +531,6 @@ class MPIWorker(MPIProcess):
             epoch_metrics = epoch_metrics * (1.0/ (i_batch+1))
             print ("Worker {0} average metrics:".format(self.ranks))
             self.model.print_metrics(epoch_metrics)
-            #self.callbacks.on_epoch_end(epoch, self.get_logs(epoch_metrics))
             self.callback.on_epoch_end(epoch, metrics = epoch_metrics)
         print ("MPIWorker {0} signing off".format(self.ranks))
         self.send_exit_to_parent()
@@ -673,9 +662,6 @@ class MPIMaster(MPIProcess):
                     self.apply_update()
                     self.sync_parent()
                     self.sync_children()
-                #print ("not resseting the update variables")
-                #self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
-                ## should we remove this ???JR
                 self.update = self.model.format_update()
             if (self.algo.validate_every > 0 and 
                     self.time_step % self.algo.validate_every == 0 and self.time_step > 0):
