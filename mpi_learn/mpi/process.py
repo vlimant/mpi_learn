@@ -447,6 +447,8 @@ class MPIProcess(object):
         ir = None
         if not self.is_shadow():
             ir = self.parent_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
+        elif self.process_comm:
+            ir = self.process_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
         ## should bcast to all ranks in process_comm
         return ir
 
@@ -523,6 +525,10 @@ class MPIWorker(MPIProcess):
                 self.callback.on_batch_end(i_batch, batch_logs)
                 if exit_request and exit_request.Test():
                     self.stop_training = True
+                    if self.process_comm:
+                        for r in range(1, self.process_comm.Get_size()):
+                            ## propagate the exit signal to processes of this worker
+                            self.send_exit_to_child(r, comm=self.process_comm)
                     print ("MPIWorker {0:d} received exit request from master".format(self.rank))
                     break
             if self.stop_training:
@@ -813,5 +819,8 @@ class MPIMaster(MPIProcess):
     def recv_history_from_child(self, child):
         return self.recv( tag='history', source=child, comm=self.child_comm )
 
-    def send_exit_to_child(self, child):
-        return self.child_comm.isend( None, dest=child, tag=self.lookup_mpi_tag('exit') )
+    def send_exit_to_child(self, child, comm=None):
+        if comm is None:
+            comm = self.child_comm
+        return comm.isend( None, dest=child, tag=self.lookup_mpi_tag('exit') )
+    
