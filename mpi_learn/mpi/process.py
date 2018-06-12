@@ -81,12 +81,18 @@ class MPIProcess(object):
         
         self.rank = parent_comm.Get_rank() if parent_comm else 0
         self.build_model()
-        if self.parent_rank is not None and self.parent_comm is not None:
+        if (self.parent_rank is not None and self.parent_comm is not None):
             self.bcast_weights( self.parent_comm )
+        if (self.parent_rank is not None and self.parent_comm is not None) or (self.process_comm):
+            print ("autostart")
             self.train()
 
-    def is_shadow(self):
+    def is_shadow(self, sync = False):
         """signals that the process is a sub-process and should not act normally"""
+        if self.process_comm and sync:
+            import inspect
+            print ("syncing on the process communicator from",inspect.stack()[1][3])
+            self.process_comm.Barrier()
         return self._is_shadow
 
     def build_model(self):
@@ -163,7 +169,9 @@ class MPIProcess(object):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
             -Sync time and model weights with parent"""
-        if self.is_shadow(): return
+        if self.is_shadow():
+            return            
+            #pass
         tell = self.tell_send
         if tell: print (self.rank,"start send sequence",self.time_step)
         self.send_update(check_permission=True)
@@ -315,7 +323,7 @@ class MPIProcess(object):
             return obj
 
     def send_exit_to_parent(self):
-        if self.is_shadow():return
+        if self.is_shadow( sync = True): return
         """Send exit tag to parent process, if parent process exists"""
         if self.parent_rank is not None:
             self.send( None, 'exit' )
@@ -436,7 +444,12 @@ class MPIProcess(object):
         return self.recv( tag='bool', comm=comm, source=source )
 
     def recv_exit_from_parent(self):
-        return self.parent_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
+        ir = None
+        if not self.is_shadow():
+            ir = self.parent_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
+        ## should bcast to all ranks in process_comm
+        return ir
+
 
     def bcast_weights(self, comm, root=0):
         """Broadcast weights shape and weights (layer by layer) 
@@ -493,6 +506,10 @@ class MPIWorker(MPIProcess):
             for i_batch, batch in enumerate(self.data.generate_data()):
                 #self.callbacks.on_batch_begin(i_batch)
                 self.callback.on_batch_begin(i_batch)
+                if self.process_comm:
+                    ## broadcast the weights to all processes
+                    ## alternative is to load the broadcast callback from horovod and call it here
+                    self.bcast_weights( comm=self.process_comm )
                 train_metrics = self.train_on_batch(batch)
                 #batch_logs = self.get_logs(train_metrics)
                 batch_logs = self.model.get_logs(train_metrics)
@@ -504,7 +521,7 @@ class MPIWorker(MPIProcess):
                     self.do_send_sequence()
                 #self.callbacks.on_batch_end(i_batch, batch_logs)
                 self.callback.on_batch_end(i_batch, batch_logs)
-                if exit_request.Test():
+                if exit_request and exit_request.Test():
                     self.stop_training = True
                     print ("MPIWorker {0:d} received exit request from master".format(self.rank))
                     break
@@ -537,28 +554,16 @@ class MPIWorker(MPIProcess):
 
     def await_signal_from_parent(self):
         """Wait for 'train' signal from parent process"""
-        self.recv( tag='train' )
-
-class HRVMPIWorker(MPIWorker):
-    """This class is making an mpi group look like an MPIWorker."""
-    def __init__(self,data, algo, model_builder, parent_comm, parent_rank=None,
-                 num_epochs=1, callbacks=[], verbose=False, custom_objects={}):
-        super(HRVMPIWorker, self).__init__( data, algo, model_builder, parent_comm, parent_rank,
-                                            num_epochs, callbacks, verbose, custom_objects)
-        self.hrv_comm = None
-        
-        ## all below are making the rank-0 of the group behave like if it had trained by itself
-        def compute_update(self):
-            if self.hrv_comm.Get_rank()==0:
-                super(HRVMPIWorker, self).compute_update()
-
-        def send_exit_to_parent(self):
-            if self.hrv_comm.Get_rank()==0:
-                super(HRVMPIWorker, self).send_exit_to_parent()
-
-        def send_history_to_parent(self):
-            if self.hrv_comm.Get_rank()==0:
-                super(HRVMPIWorker, self).send_history_to_parent()
+        if not self.is_shadow():
+            tag = self.recv( tag='train' )
+        if self.process_comm:
+            if self.process_comm.Get_rank() == 0:
+                for r in range(1,self.process_comm.Get_size()):
+                    print ("relaying the train tag to",r)
+                    self.send( None, tag='train', comm=self.process_comm, dest=r)
+            else:
+                print ("receiving the train tag")
+                self.recv( tag='train', comm=self.process_comm )
 
 
 
