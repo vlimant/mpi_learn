@@ -169,26 +169,33 @@ class H5Data(Data):
     """
     def __init__(self, batch_size,
                  cache=None,
-            features_name='features', labels_name='labels'):
+                 preloading=False,
+                 features_name='features', labels_name='labels'):
         """Initializes and stores names of feature and label datasets"""
         super(H5Data, self).__init__(batch_size,cache)
         self.features_name = features_name
         self.labels_name = labels_name
         ## initialize the data-preloader
-        self.fpl = FilePreloader( [] , file_open = lambda n : h5py.File(n,'r'))
-        self.fpl.start()            
+        self.fpl = None
+        if preloading:
+            self.fpl = FilePreloader( [] , file_open = lambda n : h5py.File(n,'r'))
+            self.fpl.start()          
        
 
     def load_data(self, in_file_name):
         """Loads numpy arrays from H5 file.
             If the features/labels groups contain more than one dataset,
             we load them all, alphabetically by key."""
-        h5_file = self.fpl.getFile( in_file_name )
-        #h5_file = h5py.File( in_file_name, 'r' )
+        if self.fpl:
+            h5_file = self.fpl.getFile( in_file_name )
+        else:
+            h5_file = h5py.File( in_file_name, 'r' )
         X = self.load_hdf5_data( h5_file[self.features_name] )
         Y = self.load_hdf5_data( h5_file[self.labels_name] )
-        self.fpl.closeFile( in_file_name )
-        #h5_file.close()
+        if self.fpl:
+            self.fpl.closeFile( in_file_name )
+        else:
+            h5_file.close()
         return X,Y 
 
     def load_hdf5_data(self, data):
