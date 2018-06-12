@@ -4,29 +4,53 @@ from __future__ import division
 import math
 from mpi4py import MPI
 import numpy as np
+import time
 
 from ..train.data import H5Data
 from ..utils import get_num_gpus
 
-def get_master_ranks(comm, num_masters=1):
-    """Arguments: 
-        comm: MPI intracommunicator containing all processes
-        num_masters: number of processes that will be assigned as masters
-       Returns:
-        a list of integers corresponding to the MPI ranks that will be assigned as masters"""
-    if num_masters > 1:
-        return [0]+list(range(1, comm.Get_size(), (comm.Get_size()-1) // (num_masters-1)))
-    return [0]
+#def get_master_ranks(comm, num_masters=1, num_processes=1):
+#    """Arguments: 
+#        comm: MPI intracommunicator containing all processes
+#        num_masters: number of processes that will be assigned as masters
+#        num_processes: number of processes that compose a master
+#       Returns:
+#        a list of integers corresponding to the MPI ranks that will be assigned as masters"""
+#    n_instances,remainder = divmod( comm.Get_size() - num_masters, num_processes)
+#    if remainder:
+#        print ("the grouping is not correct")
+#    #instances_ranks = list(range(0, comm.Get_size(), num_processes))
+#    ## convention of ranking the master first, then all workers
+#    #m_ranks = instances_ranks[:num_masters]
+#    m_ranks = list(range(0,num_masters))
+#    return m_ranks
 
-def get_worker_ranks(comm, num_masters=1):
-    """Arguments:
-        comm: MPI intracommunicator containing all processes
-        num_masters: number of processes that will be assigned as masters
-       Returns:
-        a list of integers corresponding to the MPI ranks that will be assigned as workers"""
-    master_ranks = get_master_ranks( comm, num_masters )
-    return [ x for x in range(comm.Get_size()) if x not in master_ranks ]
+#def get_worker_ranks(comm, num_masters=1, num_processes=1):
+#    """Arguments:
+#        comm: MPI intracommunicator containing all processes
+#        num_masters: number of processes that will be assigned as masters
+#       Returns:
+#        a list of integers corresponding to the MPI ranks that will be assigned as workers"""
+#    master_ranks = get_master_ranks( comm, num_masters, num_processes )
+#    instances_ranks = list(range(num_masters, comm.Get_size(), num_processes))
+#    return [ x for x in instances_ranks if x not in master_ranks ]
 
+def get_groups(comm, num_masters=1, num_processes=1):
+    masters = list(range(0,num_masters)) # index 0 is the uber master, the other one asre sub-masters
+    n_active_master = max(num_masters-1,1)
+    groups = [set() for _ in range(n_active_master)]
+    instances_ranks = list(range(num_masters, comm.Get_size(), num_processes))
+    processes = [None]*len(instances_ranks)
+    for ir,i_rank in enumerate(instances_ranks):
+        _,ig = divmod( ir, n_active_master )
+        groups[ig].add( i_rank )
+        groups[ig].add( masters[-1-ig] )
+        #print (ir,ig,i_rank,groups)
+        processes[ir] =  list(range(i_rank,min(i_rank+num_processes, comm.Get_size())))
+
+    groups = [sorted(g) for g in groups]
+    return masters, groups, processes
+    
 def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     """Arguments:
         comm: MPI intracommunicator containing all processes
@@ -38,7 +62,8 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     if gpu_for_master:
         gpu_ranks = range(comm.Get_size())
     else:
-        gpu_ranks = get_worker_ranks( comm, num_masters )
+        #gpu_ranks = get_worker_ranks( comm, num_masters )
+        gpu_ranks = range(comm.Get_size())
 
     # Get the ranks of the other processes that share the same host
     # and determine which GPU to take on the host
@@ -65,7 +90,7 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     #else:
     #    return 'gpu%d' % (worker_id%(max_gpu+1))
 
-    def get_gpu_list(mem_lim = 1):
+    def get_gpu_list(mem_lim = 2000):
         import gpustat
         stats = gpustat.GPUStatCollection.new_query()
         ids = list(map(lambda gpu: int(gpu.entry['index']), stats))
@@ -129,8 +154,8 @@ class MPIManager(object):
     """
 
     def __init__(self, comm, data, algo, model_builder, num_epochs, train_list, 
-            val_list, num_masters=1, synchronous=False, callbacks=[], 
-            worker_callbacks=[], verbose=False, custom_objects={}):
+                 val_list, num_masters=1, num_processes=1, synchronous=False, callbacks=[], 
+                 worker_callbacks=[], verbose=False, custom_objects={}):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -140,6 +165,7 @@ class MPIManager(object):
             algo: Algo object containing training algorithm configuration options
             model_builder: ModelBuilder object
             num_masters: number of master processes
+            num_processes: number of processes that make up a worker/master (gpu allreduce)
             num_epochs: number of times to iterate over the training data
             train_list: list of training data files
             val_list: list of validation data files
@@ -152,9 +178,11 @@ class MPIManager(object):
         self.algo = algo
         self.model_builder = model_builder
         self.num_masters = num_masters
-        self.num_workers = comm.Get_size() - self.num_masters 
-        #if self.num_masters > 1:
-        #    self.num_workers -= 1 # one process is taken up by the super-master
+        self.num_processes = num_processes
+        n_instances,remainder = divmod(comm.Get_size()-self.num_masters, self.num_processes)
+        if remainder:
+            print ("The accounting is not correct,",remainder,"nodes are left behind")
+        self.num_workers = n_instances # - self.num_masters
         self.worker_id = -1
 
         self.num_epochs = num_epochs
@@ -166,6 +194,7 @@ class MPIManager(object):
         self.verbose = verbose
         self.comm_block = None
         self.comm_masters = None
+        self.comm_instance = None
         self.is_master = None
         self.should_validate = None
         self.custom_objects=custom_objects
@@ -176,6 +205,7 @@ class MPIManager(object):
         """Define the network topology by creating communicators linking masters with their slaves.
             Set comm_block to contain one master and all of its workers.
             Set comm_masters to contain all masters, including the "super-master" supervising them.
+            Set comm_instance to contain the nodes contributing to the woker/master instance
             Define a master or worker object as appropriate for each process.
             If a worker is created, it is assigned some data files to train on.
         """
@@ -183,20 +213,63 @@ class MPIManager(object):
         # children, and parent_comm be that used to message the node's parents.
 
         self.parent_rank = 0
+        self.is_master = False
+        rank = comm.Get_rank()
+        masters, groups, processes = get_groups( comm, self.num_masters, self.num_processes)
+        print ("rank",rank)
 
+        print ("masters",masters)
+        if len(masters)>1:
+            self.comm_masters = comm.Create( comm.Get_group().Incl( masters ))
+        if rank in masters:
+            ## make the communicator for masters
+            self.is_master = True
+        if rank ==0 :
+            self.should_validate = True
+
+            
+        print ("groups",groups)
+        for gr in groups:
+            if rank in gr:
+                self.comm_block = comm.Create( comm.Get_group().Incl( gr ))
+                break
+
+        if self.comm_block is None:
+            _ = comm.Create( comm.Get_group().Incl( [rank] ))
+        if not self.is_master and self.comm_block:
+            self.worker_id = self.comm_block.Get_rank()
+
+        print ("processes",processes)
+        for pr in processes:
+            if rank in pr and len(pr)>1:
+                ## make the communicator for that process group
+                self.comm_instance = comm.Create( comm.Get_group().Incl( pr ))
+                break
+        if not self.comm_instance:
+            _ = comm.Create( comm.Get_group().Incl( [rank] ))
+                             
+        
+        if self.comm_instance:
+            ids = self.comm_instance.allgather( self.worker_id )
+            self.worker_id = list(filter(lambda i:i!=-1, ids))[0]
+
+        print ("master comm",self.comm_masters,(self.comm_masters.Get_size() if self.comm_masters else "N/A"))
+        print ("block comm",self.comm_block,(self.comm_block.Get_size() if self.comm_block else "N/A"))
+        print ("instance comm",self.comm_instance,(self.comm_instance.Get_size() if self.comm_instance else "N/A"))
+        print ("worker id",self.worker_id)
+        print ("is master", self.is_master)
+        
         # Case (1)
         if self.num_masters > 1:
-            self.make_comms_many(comm)
             if self.is_master:
                 parent_comm = self.comm_masters
-                if self.comm_masters.Get_rank() == 0: # rank 0 is the super-master
+                #if rank==0:
+                if self.comm_masters.Get_rank() == 0:
                     child_comm = self.comm_masters
                     self.parent_rank = None
                 else:
                     child_comm = self.comm_block
-        # Case (2)
         else:
-            self.make_comm_single(comm)
             if self.is_master:
                 parent_comm = self.comm_block
                 child_comm = self.comm_block
@@ -214,10 +287,14 @@ class MPIManager(object):
                     verbose=self.verbose, custom_objects=self.custom_objects)
         else:
             self.set_train_data()
-            self.process = MPIWorker( parent_comm=self.comm_block, parent_rank=self.parent_rank, 
-                    num_epochs=self.num_epochs, data=self.data, algo=self.algo, 
-                    model_builder=self.model_builder, callbacks=self.worker_callbacks, 
-                    verbose=self.verbose, custom_objects=self.custom_objects)
+            self.process = MPIWorker( data=self.data, algo=self.algo,
+                                      model_builder=self.model_builder,
+                                      process_comm = self.comm_instance,
+                                      parent_comm=self.comm_block,
+                                      parent_rank=self.parent_rank, 
+                                      num_epochs=self.num_epochs,
+                                      callbacks=self.worker_callbacks, 
+                                      verbose=self.verbose, custom_objects=self.custom_objects)
 
     def figure_of_merit(self):
         ##if (self.comm_masters and self.comm_masters.Get_rank() == 0) or (self.comm_block.Get_rank() == 0):
@@ -249,13 +326,23 @@ class MPIManager(object):
 
     def set_train_data(self):
         """Sets the training data files to be used by the current process"""
-        files_per_worker = len(self.train_list) // self.num_workers
-        files_for_this_worker = self.train_list[ 
-                self.worker_id*files_per_worker : (self.worker_id+1)*files_per_worker ]
+        print ("number of workers",self.num_workers)
+        print ("number of files",len(self.train_list))
+        #files_per_worker,_ = divmod(len(self.train_list),self.num_workers)
+        #bounds = list(range(0,len(self.train_list), files_per_worker))
+        files_for_this_worker = [fn for  (i,fn) in enumerate(self.train_list) if i%self.num_workers==(self.worker_id-1)]
+            
+        #files_for_this_worker = self.train_list[ 
+        #        self.worker_id*files_per_worker : (self.worker_id+1)*files_per_worker ]
         # The worker takes an extra file if needed
-        if self.worker_id < len(self.train_list) % self.num_workers:
-            files_for_this_worker.append(self.train_list[ self.num_workers*files_per_worker + self.worker_id ])
-        print ("Files for worker {0}:".format(self.comm_block.Get_rank()))
+        #if self.worker_id < len(self.train_list) % self.num_workers:
+        #    files_for_this_worker.append(self.train_list[ self.num_workers*files_per_worker + self.worker_id ])
+
+            
+        print ("Files for worker id{}, rank {}:{}".format(self.worker_id,self.comm_block.Get_rank() if self.comm_block else "N/A",
+                                               self.comm_instance.Get_rank() if self.comm_instance else "N/A")
+               )
+
         for f in files_for_this_worker:
             print ("  {0}".format(f))
         self.data.set_file_names( files_for_this_worker )
@@ -269,60 +356,63 @@ class MPIManager(object):
             print ("  {0}".format(f))
         self.data.set_file_names( self.val_list )
 
-    def make_comms_many(self,comm):
-        """Create MPI communicators (Case 1):
-            Rank 0 of comm_block is the master, other ranks are workers.
-            Rank 0 of comm_master is the super-master, other ranks are sub-masters.
-            Sets is_master and worker_id attributes."""
-
-        # Create a communicator containing all processes except the first.  
-        # Then divide that communicator into blocks, each with one master
-        ranks_excludefirstprocess = range(1,comm.Get_size()) 
-        comm_excludefirstprocess = comm.Create( comm.Get_group().Incl( ranks_excludefirstprocess ) )
-        if comm.Get_rank() in ranks_excludefirstprocess:
-            size_block = (comm.Get_size()-1) // (self.num_masters-1)
-            color_block = comm_excludefirstprocess.Get_rank() // size_block
-            self.comm_block = comm_excludefirstprocess.Split( color_block )
-            comm_excludefirstprocess.Free()
-        else:
-            self.comm_block = None
-        # Create a communicator containing all masters
-        ranks_mastergroup = get_master_ranks( comm, self.num_masters )
-        self.comm_masters = comm.Create( comm.Get_group().Incl(ranks_mastergroup) )
-        self.is_master = ( comm.Get_rank() in ranks_mastergroup )
-        self.should_validate = ( comm.Get_rank() == 0 )
-        # Get the worker ID
-        ranks_workergroup = get_worker_ranks( comm, self.num_masters )
-        if not self.is_master:
-            self.worker_id = ranks_workergroup.index( comm.Get_rank() )
-
-    def make_comm_single(self,comm):
-        """Create MPI communicator (Case 2): Rank 0 is master, all others are workers
-            Sets is_master and worker_id attributes"""
-        self.comm_block = comm
-        self.is_master = ( self.comm_block.Get_rank() == 0 )
-        self.should_validate = self.is_master
-        if not self.is_master:
-            self.worker_id = self.comm_block.Get_rank() - 1
-
+#    def make_comms_many(self,comm):
+#        """Create MPI communicators# (Case 1):
+#            Rank 0 of comm_block is# the master, other ranks are workers.
+#            Rank 0 of comm_master i#s the super-master, other ranks are sub-masters.
+#            Sets is_master and work#er_id attributes."""
+#
+#        # Create a communicator containing all processes except the first.  
+#        # Then divide that communicator into blocks, each with one master
+#        ranks_excludefirstprocess = range(1,comm.Get_size()) 
+#        comm_excludefirstprocess = comm.Create( comm.Get_group().Incl( ranks_excludefirstprocess ) )
+#        if comm.Get_rank() in ranks_excludefirstprocess:
+#            size_block = (comm.Get_size()-1) // (self.num_masters-1)
+#            color_block = comm_excludefirstprocess.Get_rank() // size_block
+#            self.comm_block = comm_excludefirstprocess.Split( color_block )
+#            comm_excludefirstprocess.Free()
+#        else:
+#            self.comm_block = None
+#        # Create a communicator containing all masters
+#        ranks_mastergroup = get_master_ranks( comm, self.num_masters )
+#        self.comm_masters = comm.Create( comm.Get_group().Incl(ranks_mastergroup) )
+#        self.is_master = ( comm.Get_rank() in ranks_mastergroup )
+#        self.should_validate = ( comm.Get_rank() == 0 )
+#        # Get the worker ID
+#        ranks_workergroup = get_worker_ranks( comm, self.num_masters )
+#        if not self.is_master:
+#            self.worker_id = ranks_workergroup.index( comm.Get_rank() )
+#
+#    def make_comm_single(self,comm):
+#        """Create MPI communicator (Case 2): Rank 0 is master, all others are workers
+#            Sets is_master and worker_id attributes"""
+#        self.comm_block = comm
+#        self.is_master = ( self.comm_block.Get_rank() == 0 )
+#        self.should_validate = self.is_master
+#        if not self.is_master:
+#            self.worker_id = self.comm_block.Get_rank() - 1
+#
     def free_comms(self):
         """Free active MPI communicators"""
         if self.comm_block is not None:
             self.comm_block.Free()
         if self.comm_masters is not None:
             self.comm_masters.Free()
-        
+        if self.comm_instance is not None:
+            self.comm_instance.Free()
 
 class MPIKFoldManager(MPIManager):
     def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
-                  val_list, num_masters=1, synchronous=False, callbacks=[], 
+                  val_list, num_masters=1,
+                  num_process=1,
+                  synchronous=False, callbacks=[], 
                   worker_callbacks=[], verbose=False, custom_objects={}):
         self.comm_world = comm
         self.comm_fold = None
         if NFolds == 1:
             ## make a regular MPIManager
             self.manager = MPIManager(comm, data, algo, model_builder, num_epochs, train_list,
-                                      val_list, num_masters,
+                                      val_list, num_masters,num_process,
                                       synchronous, callbacks,
                                       worker_callbacks, verbose, custom_objects)
             return
@@ -347,7 +437,8 @@ class MPIKFoldManager(MPIManager):
         train_list_on_fold = list(np.asarray(all_files)[ train ])
         val_list_on_fold = list(np.asarray(all_files)[ test ])
         self.manager = MPIManager(self.comm_fold, data, algo, model_builder, num_epochs, train_list_on_fold,
-                                  val_list_on_fold, num_masters, synchronous, callbacks,
+                                  val_list_on_fold, num_masters,num_process,
+                                  synchronous, callbacks,
                                   worker_callbacks, verbose, custom_objects)
                 
     def train(self):
