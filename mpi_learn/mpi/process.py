@@ -64,9 +64,10 @@ class MPIProcess(object):
             #'mpi',
             #'build',
             #'bcast'
-            #'loss'
+            #'loss',
+            #'metrics'
         ]
-        for extra in ['send','receive','mpi','build','bcast','loss','update']:
+        for extra in ['send','receive','mpi','build','bcast','loss','update','metrics']:
             attr = 'tell_%s'%extra
             setattr( self, attr, bool(extra in ev))
             print (attr, getattr(self, attr))
@@ -529,8 +530,9 @@ class MPIWorker(MPIProcess):
                 break
             ## broken
             epoch_metrics = epoch_metrics * (1.0/ (i_batch+1))
-            print ("Worker {0} average metrics:".format(self.ranks))
-            self.model.print_metrics(epoch_metrics)
+            if self.tell_metrics:
+                print ("Worker {0} average metrics:".format(self.ranks))
+                self.model.print_metrics(epoch_metrics)
             self.callback.on_epoch_end(epoch, metrics = epoch_metrics)
         print ("MPIWorker {0} signing off".format(self.ranks))
         self.send_exit_to_parent()
@@ -540,7 +542,7 @@ class MPIWorker(MPIProcess):
     def train_on_batch(self, batch):
         """Train on a single batch"""
         train_loss = self.model.train_on_batch( x=batch[0], y=batch[1] )
-        if self.verbose:
+        if self.tell_metrics:
             print ("Worker {0} metrics:".format(self.ranks))
             self.print_metrics(train_loss)
         if self.tell_loss:
