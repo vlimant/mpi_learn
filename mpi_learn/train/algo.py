@@ -60,6 +60,19 @@ class Algo(object):
         else:
             self.optimizer = None
 
+        """Workers are only responsible for computing the gradient and 
+            sending it to the master, so we use ordinary SGD with learning rate 1 and 
+            compute the gradient as (old weights - new weights) after each batch."""
+        if self.worker_optimizer == 'sgd':
+            from keras.optimizers import SGD
+            if self.elastic_momentum > 0:
+                self.worker_optimizer_obj = SGD(lr=self.elastic_lr, momentum=self.elastic_momentum, nesterov=True)
+            else:
+                self.worker_optimizer_obj = SGD(lr=self.elastic_lr)
+        else:
+            import keras.optimizers as kopt
+            self.worker_optimizer_obj = kopt.get(self.worker_optimizer)
+
         self.step_counter = 0
         if self.mode == 'easgd':
             self.worker_update_type = 'weights'
@@ -81,18 +94,8 @@ class Algo(object):
     ### For Worker ###
 
     def compile_model(self, model):
-        """Compile the model. Workers are only responsible for computing the gradient and 
-            sending it to the master, so we use ordinary SGD with learning rate 1 and 
-            compute the gradient as (old weights - new weights) after each batch"""
-        if self.worker_optimizer == 'sgd':
-            from keras.optimizers import SGD
-            if self.elastic_momentum > 0:
-                optimizer = SGD(lr=self.elastic_lr, momentum=self.elastic_momentum, nesterov=True)
-            else:
-                optimizer = SGD(lr=self.elastic_lr)
-        else:
-            optimizer = self.worker_optimizer 
-        model.compile( loss=self.loss, optimizer=optimizer, metrics=['accuracy'] )
+        """Compile the model."""
+        model.compile( loss=self.loss, optimizer=self.worker_optimizer_obj, metrics=['accuracy'] )
 
     def compute_update(self, cur_weights, new_weights):
         """Computes the update to be sent to the parent process"""

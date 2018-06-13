@@ -79,6 +79,14 @@ class MPIProcess(object):
         self.time_step = 0
 
         self._is_shadow = (self.process_comm is not None and self.process_comm.Get_rank()!=0)
+
+        if self.process_comm is not None and self.process_comm.Get_size() > 1:
+            import horovod.common as hvd
+            hvd.init(comm=self.process_comm)
+            # After PyTorch integration whis must be updated
+            import horovod.keras as hvdk
+            self.algo.worker_optimizer_obj = hvdk.DistributedOptimizer(self.algo.worker_optimizer_obj)
+            #self.callbacks_list.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
         
         self.rank = parent_comm.Get_rank() if parent_comm else 0
         self.ranks = "{0}:{1}:{2}".format(
