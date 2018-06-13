@@ -245,7 +245,136 @@ class MPIModel(object):
                 fn = 'm%d_%s'%( im, args[0])
                 print (fn)
                 m.save( fn, **kwargs )
+                
+class MPITModel(MPIModel):
+    """
+    adapter of a torch model to fit in the mpi_learn interface
+    """
+    def __init__(self, model=None, gpus=0):
+        MPIModel.__init__(self,model = model)
+        self.gpus = gpus
+        self.metrics_names = ["loss"]
+        self.loss = None
+        self.optimizer = None
+        self.metrics = []
+        self.loss_functions = None
+        self.metrics_names = ["loss"]
+        #self.callbacks = []
+        if self.gpus >1:
+            import torch.nn as nn
+            self.model = nn.DataParallel(self.model.cuda())
 
+    def format_update(self):
+        ws = self.get_weights()
+        return [ np.zeros( w.shape, dtype=np.float32 ) for w in ws]
+    
+    def get_weights(self):
+        if self.gpus > 0:
+            return copy.deepcopy([i.data.cpu().numpy() for i in list(self.model.parameters())])
+        else:
+            return copy.deepcopy([i.data.numpy() for i in list(self.model.parameters())])
+
+    def set_weights(self, weights=[]):
+        import torch # Don't put it outside because it will break Tensorflow
+        for i,weight in enumerate(weights):
+            list(self.model.parameters())[i].data.copy_(torch.from_numpy(weight))
+
+    def compile(self, **kwargs):
+        import torch.nn
+        import torch.optim
+        from torch.autograd import Variable
+        
+    
+        ### need to map the loss string into the relevant torch object
+        #self.loss = torch.nn.NLLLoss()
+        self.loss = torch.nn.CrossEntropyLoss()
+        for metric in kwargs['metrics']:
+            if metric.lower() == 'acc' or metric.lower() == 'accuracy':
+                self.metrics_names.append('acc')
+        ## we need a mapping of the kwargs into what is the optimizer that is getting used
+        self.optimizer = torch.optim.SGD(self.model.parameters(), 1.)
+
+    def _accuracy(self, output, target, topk=(1,)):
+        """Computes the precision@k for the specified values of k"""
+        maxk = max(topk)
+        batch_size = target.size(0)
+        _, pred = output.topk(maxk, 1, True, True)
+        pred = pred.t()
+        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        
+        res = []
+        for k in topk:
+            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            res.append(correct_k.mul_(1. / batch_size))
+        return res
+    def _convert_to_tensor(self, data ):
+        import torch
+        return torch.from_numpy(data)
+        #if hasattr(data, 'keys'):
+        #    out = [torch.from_numpy(data[key]) for key in sorted(data.keys())]
+        #else:
+        #    out = torch.from_numpy(data)
+        #return out
+        
+    def train_on_batch(self, x=None, y=None, *args, **kwargs):
+        '''Perform a single gradient update on a single batch of data.
+        Attributes:
+        x: Pytorch tensor of training data
+        y: Pytorch tensor of target data
+
+        Return:
+        A list of scalar training loss and a metric specified in the compile method.
+        '''
+        from torch.autograd import Variable
+        x = self._convert_to_tensor(x)
+        y = self._convert_to_tensor(y)
+        self.model.train()
+        self.optimizer.zero_grad()
+        #target = y.long().max(1)[1] # Pytorch doesn't need 1-hot encoded label. Only the indices of classes.
+        target = y
+        if self.gpus>0:
+            x = x.cuda()
+            target = target.cuda()
+        x = Variable(x)
+        pred = self.model.forward(x)
+        loss = self.loss(pred, Variable(target))
+        loss.backward()
+        self.optimizer.step()
+        self.metrics = [loss.data.numpy()[0]] if self.gpus == 0 else [loss.data.cpu().numpy()[0]]
+        if 'acc' in self.metrics_names: # compute the accuracy
+            acc = self._accuracy(pred.data, target, topk=(1,))[0]
+            if self.gpus > 0: acc = acc.cpu()
+            self.metrics.append(acc.numpy()[0])
+        return self.metrics
+
+
+    def test_on_batch(self, x=None, y=None, *args, **kwargs):
+        '''Test the model on a single batch of samples. No gradient update is performed.
+        Attributes:
+        x: Pytorch tensor of test data
+        y: Pytorch tensor of target data
+
+        Return:
+        A list of scalar training loss and a metric specified in the compile method.
+        '''
+        from torch.autograd import Variable
+        x = self._convert_to_tensor(x)
+        y = self._convert_to_tensor(y)        
+        self.model.eval()
+        #target = y.long().max(1)[1] # Pytorch doesn't need 1-hot encoded label. Only the indices of classes.
+        target =y 
+        if self.gpus > 0:
+            x = x.cuda()
+            target = target.cuda()
+        pred = self.model.forward(Variable(x, volatile=True))
+        loss = self.loss(pred, Variable(target, volatile=True))
+        self.metrics = [loss.data.numpy()[0]] if self.gpus == 0 else [loss.data.cpu().numpy()[0]]
+        if 'acc' in self.metrics_names: # compute the accuracy
+            acc = self._accuracy(pred.data, target, topk=(1,))[0]
+            if self.gpus > 0: acc = acc.cpu()
+            self.metrics.append(acc.numpy()[0])
+        return self.metrics
+        
 class ModelBuilder(object):
     """Class containing instructions for building neural net models.
         Derived classes should implement the build_model function.
@@ -346,3 +475,22 @@ class ModelFromJsonTF(ModelBuilder):
                 model = load_model(filename=self.filename, json_str=self.json_str, 
                                    custom_objects=self.custom_objects, weights_file=self.weights)
                 return MPIModel(model = model)
+
+class ModelPytorch(ModelBuilder):
+    def __init__(self, comm, filename=None,
+                 weights = None,
+                 gpus=0):
+        print("Initializing Pytorch model")
+        super(ModelPytorch,self).__init__(comm)
+        self.filename = filename
+        self.weights = weights
+        self.gpus=gpus
+
+    def build_model(self):
+        import torch
+        model = torch.load(self.filename)
+        if self.weights:
+            wd = torch.load(self.weights)
+            model.load_state_dict(wd)
+        return MPITModel(model=model, gpus=self.gpus)
+                                                        
