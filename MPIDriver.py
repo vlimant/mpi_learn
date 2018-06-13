@@ -12,7 +12,7 @@ from time import time,sleep
 from mpi_learn.mpi.manager import MPIManager, get_device
 from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
-from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF
+from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF,ModelPytorch
 from mpi_learn.utils import import_keras
 
 if __name__ == '__main__':
@@ -80,7 +80,8 @@ if __name__ == '__main__':
     hide_device = True
     if args.torch:
         print("Using pytorch")
-        model_builder = ModelPytorch(comm, args.model_json, model_class_path='models.Models.Net')
+        import torch
+        model_builder = ModelPytorch(comm, filename=args.model_json, weights=args.model_weights, gpus=1)
     else:
         if args.tf: 
             backend = 'tensorflow'
