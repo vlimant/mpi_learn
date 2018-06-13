@@ -258,12 +258,14 @@ class MPITModel(MPIModel):
         self.optimizer = None
         self.metrics = []
         self.loss_functions = None
-        self.metrics_names = ["loss"]
         #self.callbacks = []
+        if self.gpus>0:
+            self.model = self.model.cuda()
         if self.gpus >1:
             import torch.nn as nn
-            self.model = nn.DataParallel(self.model.cuda())
-
+            self.model = nn.DataParallel(self.model)
+        setattr(self.model, 'metrics_names', self.metrics_names)
+        
     def format_update(self):
         ws = self.get_weights()
         return [ np.zeros( w.shape, dtype=np.float32 ) for w in ws]
@@ -286,8 +288,8 @@ class MPITModel(MPIModel):
         
     
         ### need to map the loss string into the relevant torch object
-        #self.loss = torch.nn.NLLLoss()
-        self.loss = torch.nn.CrossEntropyLoss()
+        self.loss = torch.nn.NLLLoss()
+        #self.loss = torch.nn.CrossEntropyLoss()
         for metric in kwargs['metrics']:
             if metric.lower() == 'acc' or metric.lower() == 'accuracy':
                 self.metrics_names.append('acc')
@@ -330,8 +332,8 @@ class MPITModel(MPIModel):
         y = self._convert_to_tensor(y)
         self.model.train()
         self.optimizer.zero_grad()
-        #target = y.long().max(1)[1] # Pytorch doesn't need 1-hot encoded label. Only the indices of classes.
-        target = y
+        target = y.long().max(1)[1] # Pytorch doesn't need 1-hot encoded label. Only the indices of classes.
+        #target = y.long()
         if self.gpus>0:
             x = x.cuda()
             target = target.cuda()
@@ -345,7 +347,7 @@ class MPITModel(MPIModel):
             acc = self._accuracy(pred.data, target, topk=(1,))[0]
             if self.gpus > 0: acc = acc.cpu()
             self.metrics.append(acc.numpy()[0])
-        return self.metrics
+        return np.asarray(self.metrics)
 
 
     def test_on_batch(self, x=None, y=None, *args, **kwargs):
@@ -361,8 +363,8 @@ class MPITModel(MPIModel):
         x = self._convert_to_tensor(x)
         y = self._convert_to_tensor(y)        
         self.model.eval()
-        #target = y.long().max(1)[1] # Pytorch doesn't need 1-hot encoded label. Only the indices of classes.
-        target =y 
+        target = y.long().max(1)[1] # Pytorch doesn't need 1-hot encoded label. Only the indices of classes.
+        #target =y.long()
         if self.gpus > 0:
             x = x.cuda()
             target = target.cuda()
@@ -373,7 +375,7 @@ class MPITModel(MPIModel):
             acc = self._accuracy(pred.data, target, topk=(1,))[0]
             if self.gpus > 0: acc = acc.cpu()
             self.metrics.append(acc.numpy()[0])
-        return self.metrics
+        return np.asarray(self.metrics)
         
 class ModelBuilder(object):
     """Class containing instructions for building neural net models.
