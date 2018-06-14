@@ -538,6 +538,7 @@ class MPIWorker(MPIProcess):
         self.send_exit_to_parent()
         self.callback.on_train_end()
         self.send_history_to_parent()
+        self.data.finalize()
 
     def train_on_batch(self, batch):
         """Train on a single batch"""
@@ -773,7 +774,8 @@ class MPIMaster(MPIProcess):
         self.print_metrics(val_metrics)
         #return self.get_logs(val_metrics, val=True)
         l = self.callback.get_logs(val_metrics, val=True)
-        if tell: print ("Ending validation")        
+        if tell: print ("Ending validation")
+        self.data.finalize()
         return l 
         # return self.callback.get_logs(val_metrics, val=True)
 

@@ -15,6 +15,7 @@ class FilePreloader(Thread):
         self.files_list = files_list
         self.file_open = file_open
         self.loaded = {} ## a dict of the loaded objects
+        self.should_stop = False
         
     def getFile(self, name):
         ## locks until the file is loaded, then return the handle
@@ -29,6 +30,8 @@ class FilePreloader(Thread):
         while not self.files_list:
             time.sleep(1)
         for name in itertools.cycle(self.files_list):
+            if self.should_stop:
+                break
             n_there = len(self.loaded.keys())
             if n_there< self.n_concurrent:
                 print ("preloading",name,"with",n_there)
@@ -36,6 +39,9 @@ class FilePreloader(Thread):
             else:
                 time.sleep(5)
 
+    def stop(self):
+        print("Stopping FilePreloader")
+        self.should_stop = True
 
 def data_class_getter(name):
     """Returns the specified Data class"""
@@ -222,3 +228,7 @@ class H5Data(Data):
                 num_data += len(X)
             h5_file.close()
         return num_data
+
+    def finalize(self):
+        if self.fpl:
+            self.fpl.stop()
