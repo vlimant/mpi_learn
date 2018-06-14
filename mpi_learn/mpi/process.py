@@ -85,7 +85,7 @@ class MPIProcess(object):
             hvd.init(comm=self.process_comm)
             # After PyTorch integration whis must be updated
             import horovod.keras as hvdk
-            self.algo.worker_optimizer_obj = hvdk.DistributedOptimizer(self.algo.worker_optimizer_obj)
+            self.algo.worker_optimizer_builder.horovod_wrapper = True
             #self.callbacks_list.append(hvd.callbacks.BroadcastGlobalVariablesCallback(0))
         
         self.rank = parent_comm.Get_rank() if parent_comm else 0

@@ -1,6 +1,7 @@
 ### ModelBuilder class and associated helper methods
 
 from mpi_learn.utils import load_model, get_device_name
+from .optimizer import OptimizerBuilder
 import numpy as np
 import copy
 
@@ -200,13 +201,19 @@ class MPIModel(object):
                 m.history = h()
 
     def compile(self, **args):
+        if 'optimizer' in args and isinstance(args['optimizer'], OptimizerBuilder):
+            opt_builder = args['optimizer']
+        else:
+            opt_builder = None
         if self.model:
+            if opt_builder:
+                args['optimizer'] = opt_builder.build()
             self.model.compile( **args )
         else:
             for m in self.models:
-                ## this does not work
-                c_args = copy.deepcopy( args )
-                m.compile( **c_args )
+                if opt_builder:
+                    args['optimizer'] = opt_builder.build()
+                m.compile( **args )
 
     def train_on_batch(self, **args):
         if self.model:

@@ -292,3 +292,24 @@ def get_optimizer(name):
             'adam':     Adam,
             }
     return lookup[name]
+
+class OptimizerBuilder(object):
+    """Builds a new Keras optimizer and optionally wraps it in horovod DistributedOptimizer."""
+
+    def __init__(self, name, config=None, horovod_wrapper=False):
+        self.name = name
+        self.config = config
+        self.horovod_wrapper = horovod_wrapper
+
+    def build(self):
+        from keras.optimizers import deserialize
+        if self.config is None:
+            self.config = {}
+        opt_config = {'class_name': self.name, 'config': self.config}
+        opt = deserialize(opt_config)
+        if self.horovod_wrapper:
+            import horovod.keras as hvd
+            if hasattr(opt, 'lr'):
+                opt.lr *= hvd.size()
+                hvd.DistributedOptimizer(opt)
+        return opt

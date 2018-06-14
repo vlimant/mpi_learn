@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from .optimizer import get_optimizer, MultiOptimizer
+from .optimizer import get_optimizer, MultiOptimizer, OptimizerBuilder
 
 class Algo(object):
     """The Algo class contains all information about the training algorithm.
@@ -63,15 +63,12 @@ class Algo(object):
         """Workers are only responsible for computing the gradient and 
             sending it to the master, so we use ordinary SGD with learning rate 1 and 
             compute the gradient as (old weights - new weights) after each batch."""
+        self.worker_optimizer_builder = OptimizerBuilder(self.worker_optimizer)
         if self.worker_optimizer == 'sgd':
-            from keras.optimizers import SGD
             if self.elastic_momentum > 0:
-                self.worker_optimizer_obj = SGD(lr=self.elastic_lr, momentum=self.elastic_momentum, nesterov=True)
+                self.worker_optimizer_builder.config = {'lr':self.elastic_lr, 'momentum':self.elastic_momentum, 'nesterov':True}
             else:
-                self.worker_optimizer_obj = SGD(lr=self.elastic_lr)
-        else:
-            import keras.optimizers as kopt
-            self.worker_optimizer_obj = kopt.get(self.worker_optimizer)
+                self.worker_optimizer_builder.config = {'lr':self.elastic_lr}
 
         self.step_counter = 0
         if self.mode == 'easgd':
@@ -95,7 +92,7 @@ class Algo(object):
 
     def compile_model(self, model):
         """Compile the model."""
-        model.compile( loss=self.loss, optimizer=self.worker_optimizer_obj, metrics=['accuracy'] )
+        model.compile( loss=self.loss, optimizer=self.worker_optimizer_builder, metrics=['accuracy'] )
 
     def compute_update(self, cur_weights, new_weights):
         """Computes the update to be sent to the parent process"""
