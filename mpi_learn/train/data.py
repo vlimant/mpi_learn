@@ -8,10 +8,10 @@ from threading import Thread
 import itertools
 
 class FilePreloader(Thread):
-    def __init__(self, files_list, file_open):
+    def __init__(self, files_list, file_open,n_ahead=2):
         Thread.__init__(self)
         self.deamon = True
-        self.n_concurrent = 2
+        self.n_concurrent = n_ahead
         self.files_list = files_list
         self.file_open = file_open
         self.loaded = {} ## a dict of the loaded objects
@@ -175,7 +175,7 @@ class H5Data(Data):
     """
     def __init__(self, batch_size,
                  cache=None,
-                 preloading=False,
+                 preloading=0,
                  features_name='features', labels_name='labels'):
         """Initializes and stores names of feature and label datasets"""
         super(H5Data, self).__init__(batch_size,cache)
@@ -184,7 +184,7 @@ class H5Data(Data):
         ## initialize the data-preloader
         self.fpl = None
         if preloading:
-            self.fpl = FilePreloader( [] , file_open = lambda n : h5py.File(n,'r'))
+            self.fpl = FilePreloader( [] , file_open = lambda n : h5py.File(n,'r'), n_ahead=preloading)
             self.fpl.start()          
        
 
