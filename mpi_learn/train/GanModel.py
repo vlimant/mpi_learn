@@ -32,6 +32,7 @@ from keras.layers.convolutional import (UpSampling3D, Conv3D, ZeroPadding3D,
 
 from mpi_learn.utils import get_device_name
 from mpi_learn.train.model import MPIModel, ModelBuilder
+from .optimizer import OptimizerBuilder
 
 import keras
 kv2 = keras.__version__.startswith('2')
@@ -335,40 +336,6 @@ def bit_flip(x, prob=0.05):
     x[selection] = 1 * np.logical_not(x[selection])
     return x
 
-class VSGD(SGD):
-    def __init__(self, **args):
-        SGD.__init__(self,**args)
-    #def get_gradients(self, loss, params):
-    #    g = SGD.get_gradients(self, loss, params)
-    #    #print ([K.get_value(gg) for gg in np.ravel(g)[:10]])
-    #    #v = K.get_value(g)
-    #    #print ([np.ravel(v)[:10]])
-    #    return g
-
-    #def get_updates(self, params, constraints, loss):
-    #    u = SGD.get_updates(self, params, constraints, loss)
-    #
-    #    #print ([K.get_value(uu) for uu in u])
-    #    return u
-
-    def get_updates(self, params, constraints, loss):
-        grads = self.get_gradients(loss, params)
-        self.updates = []
-
-        lr = self.lr
-        print ("lr",K.get_value(lr))
-        # momentum
-        shapes = [K.get_variable_shape(p) for p in params]
-        moments = [K.zeros(shape) for shape in shapes]
-        self.weights = [self.iterations] + moments
-        for p, g, m in zip(params, grads, moments):
-            #v = self.momentum * m - lr * g  # velocity
-            v = -1.*lr* g
-            #print (K.get_value(g))
-            self.updates.append(K.update(m, v))
-            new_p = p + v
-            self.updates.append(K.update(p, new_p))
-        return self.updates
 
 class StaticBatchNormalization(BatchNormalization):
     def call(self, inputs, training=None):
@@ -528,34 +495,24 @@ class GANModel(MPIModel):
     def compile(self, **args):
         ## args are fully ignored here
         print('[INFO] IN GAN MODEL: COMPILE')
+        if 'optimizer' in args and isinstance(args['optimizer'], OptimizerBuilder):
+            opt_builder = args['optimizer']
+        else:
+            opt_builder = None
 
         def make_opt(**args):
-            lr = args.get('lr',0.0001)
-            prop = args.get('prop',True) ## gets as the default
-
-            oo = args.get('optimizer',None) ## through mpi-learn
-            if type(oo) == SGD or oo == 'sgd':
-                print ('was specified as an SGD by mpi-learn')
-                lr = K.get_value(oo.lr)
-                #lr = oo.lr
-                print ('using %s'%lr)
-                prop = False
-            elif type(oo) == RMSprop or oo == 'rmsprop':
-                print ('was specfiice as an RMSprop by mpi-learn')
-                prop = True
+            if opt_builder:
+                opt = opt_builder.build()
             else:
-                print ("not supported %s"%(oo))
+                ## there are things specified from outside mpi-learn
+                lr = args.get('lr',0.0001)
+                prop = args.get('prop',True) ## gets as the default
+                if prop:
+                    opt = RMSprop()    
+                else:
+                    opt = SGD(lr=lr)
 
-            if prop:
-                opt = RMSprop()
-            else:
-                opt = SGD(lr=lr,
-                #opt = VSGD(lr=lr,
-                          #clipnorm = 1000.,
-                           clipvalue = 1000.,
-                )
-
-            print ("optimizer for compiling",opt)
+            print ("optimizer for compiling",opt) 
             return opt
 
         self.generator.compile(
