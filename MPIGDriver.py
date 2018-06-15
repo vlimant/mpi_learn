@@ -36,6 +36,8 @@ if __name__ == '__main__':
     parser.add_argument('--labels-name', help='name of HDF5 dataset with output labels',
             default='labels', dest='labels_name')
     parser.add_argument('--batch', help='batch size', default=100, type=int)
+    parser.add_argument('--preload-data', help='Preload files as we read them', default=0, type=int, dest='data_preload')
+    parser.add_argument('--cache-data', help='Cache the input files to a provided directory', default='', dest='caching_dir')
 
     # configuration of network topology
     parser.add_argument('--masters', help='number of master processes', default=1, type=int)
@@ -125,8 +127,10 @@ if __name__ == '__main__':
             os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 
-    data = H5Data( batch_size=args.batch, 
-            features_name=args.features_name, labels_name=args.labels_name )
+    data = H5Data( batch_size=args.batch,
+                   cache = args.caching_dir,
+                   preloading = args.data_preload,
+                   features_name=args.features_name, labels_name=args.labels_name )
     # We initialize the Data object with the training data list
     # so that we can use it to count the number of training examples
     data.set_file_names( train_list )
