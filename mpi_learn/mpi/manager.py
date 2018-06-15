@@ -9,32 +9,6 @@ import time
 from ..train.data import H5Data
 from ..utils import get_num_gpus
 
-#def get_master_ranks(comm, num_masters=1, num_processes=1):
-#    """Arguments: 
-#        comm: MPI intracommunicator containing all processes
-#        num_masters: number of processes that will be assigned as masters
-#        num_processes: number of processes that compose a master
-#       Returns:
-#        a list of integers corresponding to the MPI ranks that will be assigned as masters"""
-#    n_instances,remainder = divmod( comm.Get_size() - num_masters, num_processes)
-#    if remainder:
-#        print ("the grouping is not correct")
-#    #instances_ranks = list(range(0, comm.Get_size(), num_processes))
-#    ## convention of ranking the master first, then all workers
-#    #m_ranks = instances_ranks[:num_masters]
-#    m_ranks = list(range(0,num_masters))
-#    return m_ranks
-
-#def get_worker_ranks(comm, num_masters=1, num_processes=1):
-#    """Arguments:
-#        comm: MPI intracommunicator containing all processes
-#        num_masters: number of processes that will be assigned as masters
-#       Returns:
-#        a list of integers corresponding to the MPI ranks that will be assigned as workers"""
-#    master_ranks = get_master_ranks( comm, num_masters, num_processes )
-#    instances_ranks = list(range(num_masters, comm.Get_size(), num_processes))
-#    return [ x for x in instances_ranks if x not in master_ranks ]
-
 def get_groups(comm, num_masters=1, num_processes=1):
     masters = list(range(0,num_masters)) # index 0 is the uber master, the other one asre sub-masters
     n_active_master = max(num_masters-1,1)
@@ -58,38 +32,6 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
         gpu_limit: maximum number of gpus to use on one host
         gpu_for_master: whether master processes should be given a gpu
        Returns device name 'cpu' or 'gpuN' appropriate for use with theano""" 
-    rank = comm.Get_rank()
-    if gpu_for_master:
-        gpu_ranks = range(comm.Get_size())
-    else:
-        #gpu_ranks = get_worker_ranks( comm, num_masters )
-        gpu_ranks = range(comm.Get_size())
-
-    # Get the ranks of the other processes that share the same host
-    # and determine which GPU to take on the host
-    host = MPI.Get_processor_name()
-    hosts = comm.allgather(host)
-    workers_sharing_host = [ i for i in gpu_ranks
-            if hosts[i] == host ]
-    if rank in workers_sharing_host:
-        worker_id = workers_sharing_host.index( rank )
-    else:
-        worker_id = -1
-
-    print ("gpu ranks",gpu_ranks)
-    print ("gpu limit",gpu_limit)
-
-    # get_num_gpus will fail if CUDA is not installed, so we short circuit if 0 GPUs are requested
-    if gpu_limit == 0:
-        return 'cpu'
-    #max_gpu = get_num_gpus() - 1
-    #if gpu_limit > 0:
-    #    max_gpu = min( max_gpu, gpu_limit-1 )
-    #if worker_id < 0:# or worker_id > max_gpu:
-    #    return 'cpu'
-    #else:
-    #    return 'gpu%d' % (worker_id%(max_gpu+1))
-
     def get_gpu_list(mem_lim = 2000):
         import gpustat
         stats = gpustat.GPUStatCollection.new_query()
@@ -103,22 +45,35 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
         print ("unused",unused_gpu)
         return [x[0] for x in unused_gpu]
 
-    gpu_list = get_gpu_list()
-    print ("list of gpu",gpu_list)
-    print ("worker id",worker_id)
-    if worker_id < 0:
-        dev = 'gpu%d' % (gpu_list[0])
-        return dev
+    # Get the ranks of the other processes that share the same host
+    # and determine which GPU to take on the host
 
-    if len(gpu_list) == 0:
-        print("No free GPU available. Using CPU instead.")
-        return 'cpu'
+    rank = comm.Get_rank()    
+    host = MPI.Get_processor_name()
+    hosts = comm.allgather(host)
+    workers_sharing_host = [ i for i in range(comm.Get_size()) if hosts[i] == host ]
+    if rank in workers_sharing_host:
+        worker_id = workers_sharing_host.index( rank )
     else:
-        max_gpu = len(gpu_list)
-        dev = 'gpu%d' % (gpu_list[worker_id % (max_gpu)])
-        #print ("Found",dev,"free")
-        return dev
-                                                                                        
+        worker_id = -1
+    print ("on",host,"with sub-rank",worker_id)
+    
+    for inode in range( comm.Get_size()):
+        if rank == inode:
+            gpu_list = get_gpu_list()
+            if len(gpu_list) == 0:
+                print("No free GPU available. Using CPU instead.")
+                dev = 'cpu'
+            elif worker_id<0:
+                ## alone on that machine
+                print ("Alone on the node and taking the last gpu")
+                dev = 'gpu%d' % (gpu_list[-1])
+            else:
+                print ("Sharing a node and taking on the gpu")
+                dev = 'gpu%d' % (gpu_list[worker_id%len(gpu_list)])
+            print ("rank",rank,"can have",dev)
+        comm.Barrier()
+    return dev
             
 
 class MPIManager(object):
