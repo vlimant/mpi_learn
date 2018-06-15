@@ -32,6 +32,7 @@ from keras.layers.convolutional import (UpSampling3D, Conv3D, ZeroPadding3D,
 
 from mpi_learn.utils import get_device_name
 from mpi_learn.train.model import MPIModel, ModelBuilder
+from .optimizer import OptimizerBuilder
 
 import keras
 kv2 = keras.__version__.startswith('2')
@@ -528,35 +529,49 @@ class GANModel(MPIModel):
     def compile(self, **args):
         ## args are fully ignored here
         print('[INFO] IN GAN MODEL: COMPILE')
+        if 'optimizer' in args and isinstance(args['optimizer'], OptimizerBuilder):
+            opt_builder = args['optimizer']
+        else:
+            opt_builder = None
 
         def make_opt(**args):
-            lr = args.get('lr',0.0001)
-            prop = args.get('prop',True) ## gets as the default
-
-            oo = args.get('optimizer',None) ## through mpi-learn
-            if type(oo) == SGD or oo == 'sgd':
-                print ('was specified as an SGD by mpi-learn')
-                lr = K.get_value(oo.lr)
-                #lr = oo.lr
-                print ('using %s'%lr)
-                prop = False
-            elif type(oo) == RMSprop or oo == 'rmsprop':
-                print ('was specfiice as an RMSprop by mpi-learn')
-                prop = True
+            if opt_builder:
+                opt = opt_builder.build()
             else:
-                print ("not supported %s"%(oo))
+                ## there are things specified from outside mpi-learn
+                lr = args.get('lr',0.0001)
+                prop = args.get('prop',True) ## gets as the default
+                if prop:
+                    opt = RMSprop()    
+                else:
+                    opt = SGD(lr=lr)
 
-            if prop:
-                opt = RMSprop()
-            else:
-                opt = SGD(lr=lr,
-                #opt = VSGD(lr=lr,
-                          #clipnorm = 1000.,
-                           clipvalue = 1000.,
-                )
-
-            print ("optimizer for compiling",opt)
+            print ("optimizer for compiling",opt) 
             return opt
+            #oo = args.get('optimizer',None) ## through mpi-learn
+            #if type(oo) == SGD or oo == 'sgd':
+            #    print ('was specified as an SGD by mpi-learn')
+            #    lr = K.get_value(oo.lr)
+            #    #lr = oo.lr
+            #    print ('using %s'%lr)
+            #    prop = False
+            #elif type(oo) == RMSprop or oo == 'rmsprop':
+            #    print ('was specfiice as an RMSprop by mpi-learn')
+            #    prop = True
+            #else:
+            #    print ("not supported %s"%(oo))
+
+            #if prop:
+            #    opt = RMSprop()
+            #else:
+            #    opt = SGD(lr=lr,
+            #    #opt = VSGD(lr=lr,
+            #              #clipnorm = 1000.,
+            #               clipvalue = 1000.,
+            #    )
+
+            #print ("optimizer for compiling",opt)
+            #return opt
 
         self.generator.compile(
             optimizer=make_opt(**args),
