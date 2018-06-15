@@ -62,6 +62,8 @@ if __name__ == '__main__':
     parser.add_argument('--elastic-momentum',help='worker SGD momentum for EASGD',
             type=float, default=0, dest='elastic_momentum')
 
+    parser.add_argument('--load-algo', help='pass a file to load the master algorithm from', default=None, dest='load_algo')
+                        
     args = parser.parse_args()
     model_name = os.path.basename(args.model_json).replace('.json','')
 
