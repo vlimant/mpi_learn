@@ -311,5 +311,5 @@ class OptimizerBuilder(object):
             import horovod.keras as hvd
             if hasattr(opt, 'lr'):
                 opt.lr *= hvd.size()
-                hvd.DistributedOptimizer(opt)
+            opt = hvd.DistributedOptimizer(opt)
         return opt
