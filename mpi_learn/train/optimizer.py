@@ -297,7 +297,7 @@ def get_optimizer(name):
     return lookup[name]
 
 class OptimizerBuilder(object):
-    """Builds a new Keras optimizer and optionally wraps it in horovod DistributedOptimizer."""
+    """Builds a new Keras or Torch optimizer and optionally wraps it in horovod DistributedOptimizer."""
 
     def __init__(self, name, config=None, horovod_wrapper=False):
         self.name = name
@@ -315,4 +315,12 @@ class OptimizerBuilder(object):
             if hasattr(opt, 'lr'):
                 opt.lr *= hvd.size()
             opt = hvd.DistributedOptimizer(opt)
+        return opt
+
+    def build_torch(self, model):
+        import torch
+        opt = torch.optim.SGD(model.parameters(), 1.)
+        if self.horovod_wrapper:
+            import horovod.torch as hvd
+            opt = hvd.DistributedOptimizer(opt, named_parameters=model.named_parameters())
         return opt
