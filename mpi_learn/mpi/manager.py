@@ -5,6 +5,7 @@ import math
 from mpi4py import MPI
 import numpy as np
 import time
+import json
 
 from ..train.data import H5Data
 from ..utils import get_num_gpus
@@ -39,10 +40,10 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
         ratios = map(lambda gpu: float(gpu.entry['memory.used'])/float(gpu.entry['memory.total']), stats)
         #used = list(map(lambda gpu: float(gpu.entry['memory.used']), stats))
         #unused_gpu = filter(lambda x: x[1] < 100.0, zip(ids, used))
-        print ("GPU usage",[gpu.entry for gpu in stats])
+        #print ("GPU usage","\n".join([json.dumps(gpu.entry, indent=2) for gpu in stats]))
         free = list(map(lambda gpu: float(gpu.entry['memory.total'])-float(gpu.entry['memory.used']), stats))
         unused_gpu = list(filter(lambda x: x[1]  > mem_lim, zip(ids, free)))
-        print ("unused",unused_gpu)
+        ##print ("unused",unused_gpu)
         return [x[0] for x in unused_gpu]
 
     # Get the ranks of the other processes that share the same host
