@@ -93,7 +93,6 @@ if __name__ == '__main__':
 
     print (backend)
     import_keras()
-    import keras.callbacks as cbks
     import keras.backend as K
     if args.tf:
         gpu_options=K.tf.GPUOptions(
@@ -149,20 +148,12 @@ if __name__ == '__main__':
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
     if args.load_algo:
         algo.load(args.load_algo)
-    # Most Keras callbacks are supported
-    callbacks = []
-    callbacks.append( cbks.ModelCheckpoint( '_'.join([
-        model_name,args.trial_name,"mpi_learn_result.h5"]), 
-        monitor='val_loss', verbose=1 ) )
-    if args.early_stopping is not None:
-        callbacks.append( cbks.EarlyStopping( patience=args.early_stopping,
-            verbose=1 ) )
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
             num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
             num_masters=args.masters, synchronous=args.synchronous, 
-            callbacks=callbacks, verbose=args.verbose )
+            verbose=args.verbose )
 
     # Process 0 launches the training procedure
     if comm.Get_rank() == 0:

@@ -5,125 +5,13 @@ from .optimizer import OptimizerBuilder
 import numpy as np
 import copy
 
-class MPICallbacks(object):
-    def __init__(self, cbks):
-        self.cbks = cbks
-
-        self.callbacks = None
-        self.callbacksS = None
-
-        self.callback_model = None
-        self.callback_models = None
-        
-    def handle(self, modelO):
-        import keras.callbacks as cbks
-        if modelO.model:
-            ## single model case
-            self.callbacks = cbks.CallbackList( self.cbks + [modelO.model.history] )
-            if hasattr(modelO.model, 'callback_model') and modelO.model.callback_model:
-                self.callback_model = modelO.model.callback_model
-            else:
-                self.callback_model = modelO.model
-            self.callbacks.set_model( self.callback_model )
-            self.callback_model.stop_training = False
-        else:
-            self.callbacksS = []
-            self.callback_models = []
-            filepath = None
-            for im,m in enumerate(modelO.models):
-                new_cbks = [copy.deepcopy(c) for c in self.cbks]
-                for check in new_cbks:
-                    if isinstance(check, cbks.ModelCheckpoint):
-                        if filepath is None:
-                            filepath = check.filepath
-                        check.filepath = 'm%d_%s'%(im, filepath)
-                        print ("changing file path",check.filepath)                
-                #self.callbacksS.append( cbks.CallbackList( self.cbks + [m.history] ))
-                self.callbacksS.append( cbks.CallbackList( new_cbks + [m.history] ))
-                if hasattr(m, 'callback_model') and m.callback_model:
-                    self.callback_models.append( m.callback_model )
-                else:
-                    self.callback_models.append( m )                    
-                self.callbacksS[-1].set_model( self.callback_models[-1] )
-                self.callback_models[-1].stop_training = False
-                
-
-    def on_train_begin(self):
-        if self.callbacks:
-            self.callbacks.on_train_begin()
-        else:
-            for cb in self.callbacksS:
-                cb.on_train_begin()
-
-    def on_epoch_begin(self, e):
-        if self.callbacks:
-            self.callbacks.on_epoch_begin(e)
-        else:
-            for cb in self.callbacksS:
-                cb.on_epoch_begin(e)
-
-    def on_batch_begin(self, i):
-        if self.callbacks:
-            self.callbacks.on_batch_begin(i)
-        else:
-            for cb in self.callbacksS:
-                cb.on_batch_begin(i)
-
-    def on_batch_end(self, i, l):
-        if self.callbacks:
-            self.callbacks.on_batch_end(i, l)
-        else:
-            for cb,lo in zip(self.callbacksS,l):
-                cb.on_batch_end(i, lo)
-                
-    def get_logs(self, metrics, val=False):
-        if self.callbacks:
-            if val:
-                return { 'val_'+name:np.asscalar(metric) for name, metric in
-                         zip( self.callback_model.metrics_names, metrics ) }
-            else:
-                return { name:np.asscalar(metric) for name, metric in
-                         zip( self.callback_model.metrics_names, metrics ) }
-        else:
-            logs = []
-            for im,m in enumerate(self.callback_models):
-                ametrics = metrics[im,...]
-                if val:
-                    logs.append({ 'val_'+name:np.asscalar(metric) for name, metric in
-                             zip(m.metrics_names, ametrics ) })
-                else:
-                    logs.append({ name:np.asscalar(metric) for name, metric in
-                                  zip(m.metrics_names, ametrics ) })
-            return logs
-
-    def on_epoch_end(self, e, logs = None, metrics = None):
-        if logs == None:
-            logs = self.get_logs( metrics)
-        if self.callbacks:
-            self.callbacks.on_epoch_end(e, logs )
-        else:
-            for cb,l in zip(self.callbacksS, logs):
-                cb.on_epoch_end(e, l)
-                
-    def on_train_end(self):
-        if self.callbacks:
-            self.callbacks.on_train_end()
-        else:
-            for cb in self.callbacksS:
-                cb.on_train_end()
-
-    def stop_training(self):
-        if self.callback_model:
-            return self.callback_model.stop_training
-        else:
-            return any([cbm.stop_training for cbm in self.callback_models])
-                
 class MPIModel(object):
     """Class that abstract all details of the model
     """
     def __init__(self, model=None, models=None):
         self.model = model
         self.models = models
+        self.histories = {}
         if model and models:
             raise Exception("Cannot specify single and multiple models")
 
@@ -161,7 +49,22 @@ class MPIModel(object):
                     logs.append({ name:np.asscalar(metric) for name, metric in
                                   zip(m.metrics_names, ametrics ) })
             return logs
-
+        
+    def update_history(self, items, arg_hist):
+        if self.model:
+            for m,v in items.items():
+                arg_hist.setdefault(m,[]).append(v)
+        else:
+            for im,(m,it) in enumerate(zip(self.models, items)):
+                m_name = "model%s"%im
+                try:
+                    m_name = m.name
+                except:
+                    print ("no name attr")
+                for m,v in it.items():
+                    arg_hist.setdefault(m_name,{}).setdefault(m,[]).append(v)
+        self.histories = arg_hist
+                       
     def format_update(self):
         if self.model:
             return [ np.zeros( w.shape, dtype=np.float32 ) for w in self.model.get_weights() ]
@@ -187,18 +90,18 @@ class MPIModel(object):
             for m,mw in zip(self.models, w ):
                 m.set_weights( mw )
             
-    def history(self):
-        if self.model:
-            return self.model.history.history
-        else:
-            return [m.history.history for m in self.models]
+    #def history(self):
+    #    if self.model:
+    #        return self.model.history.history
+    #    else:
+    #        return [m.history.history for m in self.models]
             
-    def set_history(self, h):
-        if self.model:
-            self.model.history = h()
-        else:
-            for m in self.models:
-                m.history = h()
+    #def set_history(self, h):
+    #    if self.model:
+    #        self.model.history = h()
+    #    else:
+    #        for m in self.models:
+    #            m.history = h()
 
     def compile(self, **args):
         if 'optimizer' in args and isinstance(args['optimizer'], OptimizerBuilder):
@@ -238,8 +141,8 @@ class MPIModel(object):
         ## can of course be the validation loss
         if self.model:
             ## return a default value from the validation history
-            return (1.-self.model.history.history['val_acc'][-1])
-            #return self.model.history.history['val_loss'][-1]
+            return (1.-self.histories['val_acc'][-1])
+            #return self.histories['val_loss'][-1]
         else: 
             return 0.
 
@@ -265,7 +168,7 @@ class MPITModel(MPIModel):
         self.optimizer = None
         self.metrics = []
         self.loss_functions = None
-        #self.callbacks = []
+
         if self.gpus>0:
             self.model = self.model.cuda()
         if self.gpus >1:

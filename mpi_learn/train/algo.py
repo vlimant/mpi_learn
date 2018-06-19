@@ -50,6 +50,7 @@ class Algo(object):
                 setattr(self, opt, kwargs[opt])
             else:
                 setattr(self, opt, self.supported_opts[opt])
+            print ("algo",opt,getattr(self,opt))
 
         self.optimizer_name = optimizer
         if optimizer is not None:
