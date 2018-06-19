@@ -284,21 +284,17 @@ class MPIManager(object):
         """Sets the training data files to be used by the current process"""
         print ("number of workers",self.num_workers)
         print ("number of files",len(self.train_list))
-        #files_per_worker,_ = divmod(len(self.train_list),self.num_workers)
-        #bounds = list(range(0,len(self.train_list), files_per_worker))
         files_for_this_worker = [fn for  (i,fn) in enumerate(self.train_list) if i%self.num_workers==(self.worker_id-1)]
-            
-        #files_for_this_worker = self.train_list[ 
-        #        self.worker_id*files_per_worker : (self.worker_id+1)*files_per_worker ]
-        # The worker takes an extra file if needed
-        #if self.worker_id < len(self.train_list) % self.num_workers:
-        #    files_for_this_worker.append(self.train_list[ self.num_workers*files_per_worker + self.worker_id ])
 
-            
         print ("Files for worker id{}, rank {}:{}".format(self.worker_id,self.comm_block.Get_rank() if self.comm_block else "N/A",
                                                self.comm_instance.Get_rank() if self.comm_instance else "N/A")
                )
-
+        if not files_for_this_worker:
+            ## this is bad and needs to make it abort
+            print ("There are no files for training, this is a fatal issue")
+            import sys
+            sys.exit(13)
+            
         for f in files_for_this_worker:
             print ("  {0}".format(f))
         self.data.set_file_names( files_for_this_worker )
@@ -308,6 +304,12 @@ class MPIManager(object):
             (only the master process has validation data associated with it)"""
         if not self.should_validate: return None
         print ("Files for validation:" )
+        if not self.val_list:
+            ## this is bad and needs to make it abort
+            print ("There are no files for validating, this is a fatal issue")
+            import sys
+            sys.exit(13)
+                                                
         for f in self.val_list:
             print ("  {0}".format(f))
         self.data.set_file_names( self.val_list )
