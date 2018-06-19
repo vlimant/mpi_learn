@@ -77,7 +77,7 @@ class MPIProcess(object):
         self.update = None
         self.stop_training = False
         self.time_step = 0
-
+        self._short_batches = 0
         self._is_shadow = (self.process_comm is not None and self.process_comm.Get_rank()!=0)
 
         if self.process_comm is not None and self.process_comm.Get_size() > 1:
@@ -534,6 +534,7 @@ class MPIWorker(MPIProcess):
                             self.send_exit_to_child(r, comm=self.process_comm)
                     print ("MPIWorker {0} received exit request from master".format(self.ranks))
                     break
+                if self._short_batches and i_batch>self._short_batches: break
             if self.stop_training:
                 break
             ## broken
@@ -653,12 +654,9 @@ class MPIMaster(MPIProcess):
          -If we accept, we signal the worker and wait to receive the update.
          -After receiving the update, we determine whether to sync with the workers.
          -Finally we run validation if we have completed one epoch's worth of updates."""
-        #print ("receiving a time step")
         child_time = self.recv_time_step( source=source, comm=self.child_comm )
-        #print ("child time",child_time)
         self.algo.staleness = self.time_step - child_time
         accepted = self.accept_update()
-        #print ("sending",accepted,"as accepted flag")
         self.send_bool( accepted, dest=source, comm=self.child_comm )
         if accepted:
             self.recv_update( source=source, comm=self.child_comm, 
@@ -754,6 +752,7 @@ class MPIMaster(MPIProcess):
         self.callback.on_train_end()
         self.send_history_to_parent()
         self.algo.save()
+        self.data.finalize()        
         if not self.has_parent:
             return self.histories
 
@@ -765,27 +764,21 @@ class MPIMaster(MPIProcess):
             return {}
         self.model.set_weights(self.weights)
         if tell: print ("Starting validation")
-        #val_metrics = [ 0.0 for i in range( len(self.model.metrics_names()) ) ]
         val_metrics = np.zeros((1,))
         i_batch = 0
         for i_batch, batch in enumerate(self.data.generate_data()):
-            #new_val_metrics = self.model.test_on_batch(*batch)
             new_val_metrics = self.model.test_on_batch(x=batch[0], y =batch[1] )
             if val_metrics.shape != new_val_metrics.shape:
                 val_metrics =  np.zeros(new_val_metrics.shape)
             val_metrics += new_val_metrics
-            #for i in range(len(val_metrics)):
-            #    val_metrics[i] += new_val_metrics[i]
-        #val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
+            if self._short_batches and i_batch>self._short_batches: break
         val_metrics = val_metrics * (1.0/(i_batch+1))
         print ("Validation metrics:")
         self.print_metrics(val_metrics)
-        #return self.get_logs(val_metrics, val=True)
         l = self.callback.get_logs(val_metrics, val=True)
         if tell: print ("Ending validation")
-        self.data.finalize()
+        #self.data.finalize()
         return l 
-        # return self.callback.get_logs(val_metrics, val=True)
 
     def apply_update(self):
         """Updates weights according to update received from worker process"""
