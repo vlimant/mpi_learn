@@ -772,6 +772,7 @@ class MPIMaster(MPIProcess):
                 sys.exit(14)
         if self.patience:
             m,opp,p = self.patience
+            p = int(p)
             model,m=m.split(':') if ':' in m else (None,m)
             ##print ("patience validation",model,m,opp,p)
             r = self.history_key()            
