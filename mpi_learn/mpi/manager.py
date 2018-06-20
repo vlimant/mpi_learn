@@ -185,25 +185,29 @@ class MPIManager(object):
 
             
         print ("groups",groups)
-        for gr in groups:
+        for igr,gr in enumerate(groups):
             if rank in gr:
-                self.comm_block = comm.Create( comm.Get_group().Incl( gr ))
+                print ("grouping in ",gr,igr)
+                self.comm_block = comm.Split( igr )
                 break
 
         if self.comm_block is None:
-            _ = comm.Create( comm.Get_group().Incl( [rank] ))
+            _ = comm.Split( len(groups))
+            
         if not self.is_master and self.comm_block:
             self.worker_id = self.comm_block.Get_rank()
 
         print ("processes",processes)
-        for pr in processes:
+        for ipr,pr in enumerate(processes):
             if rank in pr and len(pr)>1:
                 ## make the communicator for that process group
-                self.comm_instance = comm.Create( comm.Get_group().Incl( pr ))
+                print ("grouping instances in",pr,ipr)
+                self.comm_instance = comm.Split(ipr)
                 break
+
         if not self.comm_instance:
-            _ = comm.Create( comm.Get_group().Incl( [rank] ))
-                             
+            _ = comm.Split( len(processes) )
+            
         
         if self.comm_instance:
             ids = self.comm_instance.allgather( self.worker_id )
@@ -352,12 +356,19 @@ class MPIManager(object):
 #
     def free_comms(self):
         """Free active MPI communicators"""
+        if self.process.process_comm is not None:
+            print ("holding on",self.process.process_comm.Get_size())
+            self.process.process_comm.Barrier()
+            import horovod.common as hrv
+            print ("terminating hrv")
+            hrv.terminate()        
         if self.comm_block is not None:
             self.comm_block.Free()
         if self.comm_masters is not None:
             self.comm_masters.Free()
         if self.comm_instance is not None:
             self.comm_instance.Free()
+            
 
 class MPIKFoldManager(MPIManager):
     def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
@@ -398,7 +409,9 @@ class MPIKFoldManager(MPIManager):
                                   val_list_on_fold, num_masters,num_process,
                                   synchronous, callbacks,
                                   worker_callbacks, verbose, custom_objects)
-                
+    def free_comms(self):
+        self.manager.free_comms()
+        
     def train(self):
         self.manager.train()
     
