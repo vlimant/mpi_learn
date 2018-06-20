@@ -52,8 +52,10 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--optimizer',help='optimizer for master to use',default='adam')
     parser.add_argument('--loss',help='loss function',default='binary_crossentropy')
-    parser.add_argument('--early-stopping', type=int, 
+    parser.add_argument('--early-stopping', default=None,
             dest='early_stopping', help='patience for early stopping')
+    parser.add_argument('--target-metric', default=None,
+                        dest='target_metric', help='Passing configuration for a target metric')
     parser.add_argument('--worker-optimizer',help='optimizer for workers to use',
             dest='worker_optimizer', default='sgd')
     parser.add_argument('--sync-every', help='how often to sync weights with master', 
@@ -97,7 +99,6 @@ if __name__ == '__main__':
 
         print (backend)
         import_keras()
-        import keras.callbacks as cbks
         import keras.backend as K
         if args.tf:
             gpu_options=K.tf.GPUOptions(
@@ -145,22 +146,14 @@ if __name__ == '__main__':
         algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
 
-    # Most Keras callbacks are supported
-    callbacks = []
-    if not args.torch:
-        callbacks.append( cbks.ModelCheckpoint( '_'.join([
-        model_name,args.trial_name,"mpi_learn_result.h5"]), 
-                                                monitor='val_loss', verbose=1 ) )
-        if args.early_stopping is not None:
-            callbacks.append( cbks.EarlyStopping( patience=args.early_stopping,
-                                                  verbose=1 ) )
-
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
                           num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
                           num_masters=args.masters, num_processes=args.processes,
                           synchronous=args.synchronous, 
-                          callbacks=callbacks, verbose=args.verbose )
+                          verbose=args.verbose,
+                          early_stopping=args.early_stopping,
+                          target_metric=args.target_metric    )
 
     # Process 0 launches the training procedure
     if comm.Get_rank() == 0:
@@ -172,12 +165,17 @@ if __name__ == '__main__':
         manager.free_comms()
         print ("Training finished in {0:.3f} seconds".format(delta_t))
 
+
+        ## need to massage histories to be able to json it
+        #print histories
         # Make output dictionary
-        out_dict = { "args":vars(args),
-                     "history":histories,
-                     "train_time":delta_t,
-                     }
-        json_name = '_'.join([model_name,args.trial_name,"history.json"]) 
-        with open( json_name, 'w') as out_file:
-            out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
+        #out_dict = { "args":vars(args),
+        #             "history":histories,
+        #             "train_time":delta_t,
+        #             }
+        json_name = '_'.join([model_name,args.trial_name,"history.json"])
+        #with open( json_name, 'w') as out_file:
+        #    out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
+        manager.process.record_details(json_name,
+                                       meta={"args":vars(args)})            
         print ("Wrote trial information to {0}".format(json_name))

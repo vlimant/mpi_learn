@@ -104,14 +104,12 @@ class MPIManager(object):
           is_master: boolean determining if this process is a master
           should_validate: boolean determining if this process should run training validation
           synchronous: whether or not to syncronize workers after each update
-          callbacks: keras callbacks to use during training
-          worker_callbacks: callbacks to be executed by worker processes
           verbose: whether to make MPIProcess objects verbose
     """
 
     def __init__(self, comm, data, algo, model_builder, num_epochs, train_list, 
-                 val_list, num_masters=1, num_processes=1, synchronous=False, callbacks=[], 
-                 worker_callbacks=[], verbose=False, custom_objects={}):
+                 val_list, num_masters=1, num_processes=1, synchronous=False,
+                 verbose=False, custom_objects={}, early_stopping=None,target_metric=None):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -126,8 +124,6 @@ class MPIManager(object):
             train_list: list of training data files
             val_list: list of validation data files
             synchronous: true if masters should operate in synchronous mode
-            callbacks: list of keras callback objects
-            worker_callbacks: list of keras callback objects
             verbose: whether to make MPIProcess objects verbose
         """
         self.data = data
@@ -145,8 +141,6 @@ class MPIManager(object):
         self.train_list = train_list
         self.val_list = val_list
         self.synchronous = synchronous
-        self.callbacks = callbacks
-        self.worker_callbacks = worker_callbacks
         self.verbose = verbose
         self.comm_block = None
         self.comm_masters = None
@@ -154,7 +148,8 @@ class MPIManager(object):
         self.is_master = None
         self.should_validate = None
         self.custom_objects=custom_objects
-
+        self.early_stopping = early_stopping
+        self.target_metric = target_metric
         self.make_comms(comm)
 
     def make_comms(self,comm):
@@ -241,10 +236,12 @@ class MPIManager(object):
             self.set_val_data()
             num_sync_workers = self.get_num_sync_workers(child_comm)
             self.process = MPIMaster( parent_comm, parent_rank=self.parent_rank, 
-                    data=self.data, algo=self.algo, model_builder=self.model_builder, 
-                    child_comm=child_comm, num_epochs=self.num_epochs, 
-                    num_sync_workers=num_sync_workers, callbacks=self.callbacks, 
-                    verbose=self.verbose, custom_objects=self.custom_objects)
+                                      data=self.data, algo=self.algo, model_builder=self.model_builder, 
+                                      child_comm=child_comm, num_epochs=self.num_epochs, 
+                                      num_sync_workers=num_sync_workers,
+                                      verbose=self.verbose, custom_objects=self.custom_objects,
+                                      early_stopping = self.early_stopping, target_metric = self.target_metric
+            )
         else:
             self.set_train_data()
             self.process = MPIWorker( data=self.data, algo=self.algo,
@@ -253,7 +250,6 @@ class MPIManager(object):
                                       parent_comm=self.comm_block,
                                       parent_rank=self.parent_rank, 
                                       num_epochs=self.num_epochs,
-                                      callbacks=self.worker_callbacks, 
                                       verbose=self.verbose, custom_objects=self.custom_objects)
 
     def figure_of_merit(self):
@@ -374,16 +370,19 @@ class MPIKFoldManager(MPIManager):
     def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
                   val_list, num_masters=1,
                   num_process=1,
-                  synchronous=False, callbacks=[], 
-                  worker_callbacks=[], verbose=False, custom_objects={}):
+                  synchronous=False, 
+                  verbose=False, custom_objects={},
+                  early_stopping=None,target_metric=None):
         self.comm_world = comm
         self.comm_fold = None
+        self.fold_num = None
         if NFolds == 1:
             ## make a regular MPIManager
             self.manager = MPIManager(comm, data, algo, model_builder, num_epochs, train_list,
                                       val_list, num_masters,num_process,
-                                      synchronous, callbacks,
-                                      worker_callbacks, verbose, custom_objects)
+                                      synchronous,
+                                      verbose, custom_objects,
+                                      early_stopping,target_metric)
             return
         
         if int(comm.Get_size() / float(NFolds))<=1:
@@ -392,6 +391,7 @@ class MPIKFoldManager(MPIManager):
         ## actually split further the work in folds
         rank = comm.Get_rank()
         fold_num = int(rank * NFolds / comm.Get_size())
+        self.fold_num = fold_num
         self.comm_fold = comm.Split(fold_num)
         print ("For node {}, with block rank {}, send in fold {}".format(MPI.COMM_WORLD.Get_rank(), rank, fold_num))
         self.manager = None
@@ -407,11 +407,13 @@ class MPIKFoldManager(MPIManager):
         val_list_on_fold = list(np.asarray(all_files)[ test ])
         self.manager = MPIManager(self.comm_fold, data, algo, model_builder, num_epochs, train_list_on_fold,
                                   val_list_on_fold, num_masters,num_process,
-                                  synchronous, callbacks,
-                                  worker_callbacks, verbose, custom_objects)
+                                  synchronous,
+                                  verbose, custom_objects,
+                                  early_stopping,target_metric)
+
     def free_comms(self):
         self.manager.free_comms()
-        
+
     def train(self):
         self.manager.train()
     

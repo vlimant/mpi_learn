@@ -350,7 +350,7 @@ class GANModel(MPIModel):
         self._switchingloss = args.get('switchingloss',False)
         self._heavycheck = args.get('heavycheck',False)
         self._show_values = args.get('show_values',False)
-        self._show_loss = args.get('show_loss', True)
+        self._show_loss = args.get('show_loss', False)
         self._show_weights = False
 
         self.latent_size=args.get('latent_size',200)
@@ -937,7 +937,6 @@ class GANModel(MPIModel):
             var['sumx'+str(energy)], var['sumy'+str(energy)], var['sumz'+str(energy)] = np.mean(sumsx_act, axis=0), np.mean(sumsy_act, axis=0), np.mean(sumsz_act, axis=0)
 
         return energies, var
-
 
     def figure_of_merit(self, **args):
         if (not self.calculate_fom) :
