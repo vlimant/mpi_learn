@@ -354,12 +354,19 @@ class MPIManager(object):
 #
     def free_comms(self):
         """Free active MPI communicators"""
+        if self.process.process_comm is not None:
+            print ("holding on",self.process.process_comm.Get_size())
+            self.process.process_comm.Barrier()
+            import horovod.common as hrv
+            print ("terminating hrv")
+            hrv.terminate()        
         if self.comm_block is not None:
             self.comm_block.Free()
         if self.comm_masters is not None:
             self.comm_masters.Free()
         if self.comm_instance is not None:
             self.comm_instance.Free()
+            
 
 class MPIKFoldManager(MPIManager):
     def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
@@ -400,7 +407,9 @@ class MPIKFoldManager(MPIManager):
                                   val_list_on_fold, num_masters,num_process,
                                   synchronous, callbacks,
                                   worker_callbacks, verbose, custom_objects)
-                
+    def free_comms(self):
+        self.manager.free_comms()
+        
     def train(self):
         self.manager.train()
     
