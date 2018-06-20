@@ -164,7 +164,7 @@ def discriminator(fixed_bn = False, discr_drop_out=0.2):
 
     fake = _Dense(1, activation='sigmoid', name='classification')(dnn_out)
     aux = _Dense(1, activation='linear', name='energy')(dnn_out)
-    ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)))(image)
+    ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)), name='sum_cell')(image)
 
     return _Model(output=[fake, aux, ecal], input=image, name='discriminator_model')
 
@@ -433,7 +433,7 @@ class GANModel(MPIModel):
 
         fake = Dense(1, activation='sigmoid', name='generation')(h)
         aux = Dense(1, activation='linear', name='auxiliary')(h)
-        ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)))(image)
+        ecal = Lambda(lambda x: K.sum(x, axis=(1, 2, 3)), name='sum_cell')(image)
 
         self.discriminator = Model(output=[fake, aux, ecal], input=image, name='discriminator_model')
 
@@ -535,6 +535,11 @@ class GANModel(MPIModel):
             loss=['binary_crossentropy', 'mean_absolute_percentage_error', 'mean_absolute_percentage_error'],
             loss_weights=self.discr_loss_weights
         )
+        self.combined.metrics_names = self.discriminator.metrics_names
+        print (self.discriminator.metrics_names)
+        print (self.combined.metrics_names)
+
+        
         if hasattr(self, 'calculate_fom'):
             self.energies, self.g4var = self.prepare_geant4_data()
          
@@ -939,6 +944,8 @@ class GANModel(MPIModel):
         return energies, var
 
     def figure_of_merit(self, **args):
+        print (self.histories)
+        
         if (not self.calculate_fom) :
             raise ValueError('FOM not enabled: No Geant4 data calculated')
         total = 0

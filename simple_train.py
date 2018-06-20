@@ -105,6 +105,7 @@ def dump():
 
 nepochs = options.epochs
 
+histories={}
 for e in range(nepochs):
     history[e] = []
     thistory[e] = []
@@ -136,10 +137,14 @@ for e in range(nepochs):
             #print (ibatch,ibatch>max_batch,max_batch)
             if over_test or not train_me:
                 t_losses = gm.test_on_batch(sub_X,sub_Y)
+                l = gm.get_logs( t_losses  ,val=True)
+                gm.update_history( l , histories)
                 t_losses = [list(map(float,l)) for l in t_losses]
                 thistory[e].append( t_losses )
             if train_me:
                 losses = gm.train_on_batch(sub_X,sub_Y)
+                l = gm.get_logs( losses )
+                gm.update_history( l , histories)                
                 losses = [list(map(float,l)) for l in losses]
                 history[e].append( losses )
             fom = gm.figure_of_merit()
