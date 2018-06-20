@@ -185,25 +185,29 @@ class MPIManager(object):
 
             
         print ("groups",groups)
-        for gr in groups:
+        for igr,gr in enumerate(groups):
             if rank in gr:
-                self.comm_block = comm.Create( comm.Get_group().Incl( gr ))
+                print ("grouping in ",gr,igr)
+                self.comm_block = comm.Split( igr )
                 break
 
         if self.comm_block is None:
-            _ = comm.Create( comm.Get_group().Incl( [rank] ))
+            _ = comm.Split( len(groups))
+            
         if not self.is_master and self.comm_block:
             self.worker_id = self.comm_block.Get_rank()
 
         print ("processes",processes)
-        for pr in processes:
+        for ipr,pr in enumerate(processes):
             if rank in pr and len(pr)>1:
                 ## make the communicator for that process group
-                self.comm_instance = comm.Create( comm.Get_group().Incl( pr ))
+                print ("grouping instances in",pr,ipr)
+                self.comm_instance = comm.Split(ipr)
                 break
+
         if not self.comm_instance:
-            _ = comm.Create( comm.Get_group().Incl( [rank] ))
-                             
+            _ = comm.Split( len(processes) )
+            
         
         if self.comm_instance:
             ids = self.comm_instance.allgather( self.worker_id )
