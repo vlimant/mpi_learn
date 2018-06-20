@@ -944,7 +944,9 @@ class GANModel(MPIModel):
         return energies, var
 
     def figure_of_merit(self, **args):
-        print (self.histories)
+        #print (self.histories)
+        delta_loss = np.abs(self.histories['discriminator_model']['classification_loss'][-1] - self.histories['combined_model']['classification_loss'][-1])
+        #return delta_loss
         
         if (not self.calculate_fom) :
             raise ValueError('FOM not enabled: No Geant4 data calculated')
