@@ -48,7 +48,11 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
 
     # Get the ranks of the other processes that share the same host
     # and determine which GPU to take on the host
-
+    if gpu_limit==0:
+        print ("required to not use gpu")
+        dev = 'cpu'
+        return dev
+    
     rank = comm.Get_rank()    
     host = MPI.Get_processor_name()
     hosts = comm.allgather(host)
@@ -62,6 +66,8 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     for inode in range( comm.Get_size()):
         if rank == inode:
             gpu_list = get_gpu_list()
+            if gpu_limit>=0:
+                gpu_list = gpu_list[:gpu_limit] #limit the number of gpu
             if len(gpu_list) == 0:
                 print("No free GPU available. Using CPU instead.")
                 dev = 'cpu'
