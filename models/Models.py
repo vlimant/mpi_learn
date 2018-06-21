@@ -23,6 +23,7 @@ def make_model(model_name):
             'example':make_example_model,
             'mnist':make_mnist_model,
             'mnist_torch':make_mnist_torch_model,
+            'topclass_torch':make_topclass_torch_model
             }
     return model_maker_dict[model_name]()
 
@@ -94,9 +95,18 @@ class MNistNet(torch.nn.Module):
         #return F.cross_entropy(x)
         #return x
         
-        
-    
+            
 def make_mnist_torch_model(**args):
     model = MNistNet()
     return model
-    
+
+def make_topclass_torch_model(**args):
+    conv_layers=2
+    dense_layers=2
+    dropout=0.5
+    classes=3
+    in_channels=5
+    from PytorchCNN import CNN
+    model = CNN(conv_layers=conv_layers, dense_layers=dense_layers, dropout=dropout, classes=classes, in_channels=in_channels)
+    return model
+
