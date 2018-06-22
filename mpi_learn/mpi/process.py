@@ -7,6 +7,7 @@ import time
 
 from mpi4py import MPI
 
+from ..train.monitor import Monitor
 from ..utils import Error, weights_from_shapes, shapes_from_weights
 
 ### Classes ###
@@ -32,7 +33,7 @@ class MPIProcess(object):
     """
 
     def __init__(self, parent_comm, process_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
-            model_builder=None, verbose=False, custom_objects={}):
+            model_builder=None, verbose=False, monitor=False, custom_objects={}):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, training should be launched with train().
             
@@ -44,6 +45,7 @@ class MPIProcess(object):
               algo: Algo object used to configure the training process
               model_builder: ModelBuilder object specifying model
               verbose: whether to print verbose output
+              monitor: whether to monitor CPU/GPU usage
         """
         self.parent_comm = parent_comm
         self.process_comm = process_comm
@@ -75,6 +77,11 @@ class MPIProcess(object):
         self.time_step = 0
         self._short_batches = 0
         self._is_shadow = (self.process_comm is not None and self.process_comm.Get_rank()!=0)
+
+        if monitor:
+            self.monitor = Monitor()
+        else:
+            self.monitor = None
 
         if self.process_comm is not None and self.process_comm.Get_size() > 1:
             import horovod.common as hvd
@@ -467,7 +474,7 @@ class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
     def __init__(self, data, algo, model_builder, process_comm, parent_comm, parent_rank=None, 
-            num_epochs=1, verbose=False, custom_objects={}):
+            num_epochs=1, verbose=False, monitor=False, custom_objects={}):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
         if parent_rank is None:
@@ -480,7 +487,7 @@ class MPIWorker(MPIProcess):
 
         super(MPIWorker, self).__init__( parent_comm, process_comm, parent_rank,
                 num_epochs=num_epochs, data=data, algo=algo, model_builder=model_builder,
-                verbose=verbose, custom_objects=custom_objects )
+                verbose=verbose, monitor=monitor, custom_objects=custom_objects )
 
     def train(self):
         """Wait for the signal to train. Then train for num_epochs epochs.
@@ -495,6 +502,8 @@ class MPIWorker(MPIProcess):
         exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
             print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, epoch))
+            if self.monitor:
+                self.monitor.start_monitor()
             epoch_metrics = np.zeros((1,))
             i_batch = 0
 
@@ -523,6 +532,8 @@ class MPIWorker(MPIProcess):
                     break
                 if self._short_batches and i_batch>self._short_batches: break
 
+            if self.monitor:
+                self.monitor.stop_monitor()
             epoch_metrics = epoch_metrics / float(i_batch+1)
             l = self.model.get_logs( epoch_metrics )
             self.update_history( l )
@@ -572,7 +583,7 @@ class MPIMaster(MPIProcess):
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
             num_epochs=1, data=None, algo=None, model_builder=None, 
-                 num_sync_workers=1, verbose=False, custom_objects={}, early_stopping=None, target_metric=None):
+                 num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -599,7 +610,7 @@ class MPIMaster(MPIProcess):
             print ("Will wait for updates from {0:d} workers before synchronizing".format(self.num_sync_workers))
         super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, 
                 algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
-                verbose=verbose, custom_objects=custom_objects )
+                verbose=verbose, monitor=monitor, custom_objects=custom_objects )
 
     def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""

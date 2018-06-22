@@ -115,7 +115,7 @@ class MPIManager(object):
 
     def __init__(self, comm, data, algo, model_builder, num_epochs, train_list, 
                  val_list, num_masters=1, num_processes=1, synchronous=False,
-                 verbose=False, custom_objects={}, early_stopping=None,target_metric=None):
+                 verbose=False, custom_objects={}, early_stopping=None,target_metric=None, monitor=False):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -131,6 +131,7 @@ class MPIManager(object):
             val_list: list of validation data files
             synchronous: true if masters should operate in synchronous mode
             verbose: whether to make MPIProcess objects verbose
+            monitor: whether to monitor per-process resource (CPU/GPU) usage
         """
         self.data = data
         self.algo = algo
@@ -148,6 +149,7 @@ class MPIManager(object):
         self.val_list = val_list
         self.synchronous = synchronous
         self.verbose = verbose
+        self.monitor = monitor
         self.comm_block = None
         self.comm_masters = None
         self.comm_instance = None
@@ -256,7 +258,9 @@ class MPIManager(object):
                                       parent_comm=self.comm_block,
                                       parent_rank=self.parent_rank, 
                                       num_epochs=self.num_epochs,
-                                      verbose=self.verbose, custom_objects=self.custom_objects)
+                                      verbose=self.verbose,
+                                      monitor=self.monitor,
+                                      custom_objects=self.custom_objects)
 
     def figure_of_merit(self):
         ##if (self.comm_masters and self.comm_masters.Get_rank() == 0) or (self.comm_block.Get_rank() == 0):
