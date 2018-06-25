@@ -51,8 +51,6 @@ def make_cifar10_model(**args):
     dense1 = args.get('dense1', 512)
     dense2 = args.get('dense2', 256)
     
-#     nb_filters1, nb_filters2, nb_filters3, dense1, dense2, do1, do2, do3, do4, do5 = 
-    
     if K.image_dim_ordering() == 'th':
         input_shape = (3, img_rows, img_cols)
     else:
@@ -109,8 +107,6 @@ def make_mnist_model(**args):
     ks = args.get('kernel_size',3)
     do = args.get('dropout', 0.25)
     dense = args.get('dense', 128)
-    
-#     nb_filters, ps, kernel_size, dense, dropout = 42, 2, 8, 111, 0.4470911412096806
     
     pool_size = (ps,ps)
     if K.image_dim_ordering() == 'th':
