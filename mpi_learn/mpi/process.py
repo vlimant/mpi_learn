@@ -78,10 +78,7 @@ class MPIProcess(object):
         self._short_batches = 0
         self._is_shadow = (self.process_comm is not None and self.process_comm.Get_rank()!=0)
 
-        if monitor:
-            self.monitor = Monitor()
-        else:
-            self.monitor = None
+        self.monitor = Monitor() if monitor else None
 
         if self.process_comm is not None and self.process_comm.Get_size() > 1:
             import horovod.common as hvd
@@ -112,6 +109,10 @@ class MPIProcess(object):
     def history_key(self):
         #return str(self.rank)
         return self.ranks
+
+    def update_monitor(self, perf):
+        r= self.history_key()
+        self.histories.setdefault(r,{})['monitor'] = perf
         
     def update_history(self, items):
         r= self.history_key()
@@ -537,10 +538,13 @@ class MPIWorker(MPIProcess):
             epoch_metrics = epoch_metrics / float(i_batch+1)
             l = self.model.get_logs( epoch_metrics )
             self.update_history( l )
+
             if self.stop_training:
                 break
 
         print ("MPIWorker {0} signing off".format(self.ranks))
+        if self.monitor:
+            self.update_monitor( self.monitor.get_stats() )        
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()

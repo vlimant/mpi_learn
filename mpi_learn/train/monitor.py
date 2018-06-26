@@ -3,7 +3,10 @@
 import os
 from threading import Thread
 import psutil
-import pynvml
+try:
+    import pynvml
+except:
+    print ("pynvml does not load, not monitoring available")
 import time
 
 class Monitor(object):
