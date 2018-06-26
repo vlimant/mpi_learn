@@ -20,6 +20,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose',help='display metrics for each training batch',action='store_true')
     parser.add_argument('--profile',help='profile theano code',action='store_true')
+    parser.add_argument('--monitor',help='Monitor cpu and gpu utilization', action='store_true')
     parser.add_argument('--tf', help='use tensorflow backend', action='store_true')
 
     # model arguments
@@ -51,8 +52,10 @@ if __name__ == '__main__':
     parser.add_argument('--epochs', help='number of training epochs', default=1, type=int)
     parser.add_argument('--optimizer',help='optimizer for master to use',default='adam')
     parser.add_argument('--loss',help='loss function',default='binary_crossentropy')
-    parser.add_argument('--early-stopping', type=int, 
-            dest='early_stopping', help='patience for early stopping')
+    parser.add_argument('--early-stopping', default=None,
+                        dest='early_stopping', help='Configuration for early stopping')
+    parser.add_argument('--target-metric', default=None,
+                        dest='target_metric', help='Passing configuration for a target metric')
     parser.add_argument('--worker-optimizer',help='optimizer for workers to use',
             dest='worker_optimizer', default='sgd')
     parser.add_argument('--sync-every', help='how often to sync weights with master', 
@@ -151,9 +154,10 @@ if __name__ == '__main__':
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
-            num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
-            num_masters=args.masters, synchronous=args.synchronous, 
-            verbose=args.verbose )
+                          num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
+                          num_masters=args.masters, synchronous=args.synchronous, 
+                          verbose=args.verbose , monitor=args.monitor,
+                          early_stopping=args.early_stopping,target_metric=args.target_metric )
 
     # Process 0 launches the training procedure
     if comm.Get_rank() == 0:
