@@ -6,6 +6,7 @@ from keras.datasets import cifar10
 from keras.utils import np_utils
 from keras import backend as K
 import h5py
+import sys
 
 (X_train, Y_train), (X_test, Y_test) = cifar10.load_data()
 
@@ -20,8 +21,8 @@ else:
     X_test = X_test.reshape(X_test.shape[0], img_rows, img_cols, 3)
     input_shape = (img_rows, img_cols, 3)
 
-num_train_pieces = 24
-num_test_pieces = 4
+num_train_pieces = int(sys.argv[1]) if len(sys.argv)>1 else 24
+num_test_pieces = int(sys.argv[2]) if len(sys.argv)>1 else 4
 split_X_train = [ X.astype('float32') / 255 for X in array_split(X_train, num_train_pieces) ]
 split_Y_train = [ np_utils.to_categorical(Y,10) for Y in array_split(Y_train, num_train_pieces) ]
 split_X_test = [ X.astype('float32') / 255 for X in array_split(X_test, num_test_pieces) ]
