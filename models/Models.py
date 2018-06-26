@@ -1,17 +1,29 @@
 ### Predefined Keras models
 
 import numpy as np
-from keras.models import Sequential
-from keras.layers import Dense, Activation, Dropout, Flatten
-from keras.layers import Convolution2D, MaxPooling2D
-import keras.backend as K
+try:
+    from keras.models import Sequential
+    from keras.layers import Dense, Activation, Dropout, Flatten
+    from keras.layers import Convolution2D, MaxPooling2D
+    import keras.backend as K
+except:
+    print ("no keras support")
+
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+except:
+    print ("no torch support")
 
 def make_model(model_name):
     """Constructs the Keras model indicated by model_name"""
     model_maker_dict = {
             'example':make_example_model,
             'mnist':make_mnist_model,
-            'cifar10':make_cifar10_model
+            'cifar10':make_cifar10_model,
+            'mnist_torch':make_mnist_torch_model,
+            'topclass_torch':make_topclass_torch_model
             }
     return model_maker_dict[model_name]()
 
@@ -128,4 +140,41 @@ def make_mnist_model(**args):
     model.add(Dropout(do))
     model.add(Dense(nb_classes))
     model.add(Activation('softmax'))
+    return model
+
+class MNistNet(torch.nn.Module):
+    def __init__(self):
+        super(MNistNet, self).__init__()
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
+        self.conv2_drop = nn.Dropout2d()
+        self.fc1 = nn.Linear(320, 50)
+        self.fc2 = nn.Linear(50, 10)
+        
+    def forward(self, x):
+        x = x.permute(0,3,1,2).float()
+        x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
+        x = x.view(-1, 320)
+        x = F.relu(self.fc1(x))
+        x = F.dropout(x, training=self.training)
+        x = self.fc2(x)
+        return F.log_softmax(x, dim=1)
+        #return F.softmax(x)
+        #return F.cross_entropy(x)
+        #return x
+        
+            
+def make_mnist_torch_model(**args):
+    model = MNistNet()
+    return model
+
+def make_topclass_torch_model(**args):
+    conv_layers=2
+    dense_layers=2
+    dropout=0.5
+    classes=3
+    in_channels=5
+    from PytorchCNN import CNN
+    model = CNN(conv_layers=conv_layers, dense_layers=dense_layers, dropout=dropout, classes=classes, in_channels=in_channels)
     return model
