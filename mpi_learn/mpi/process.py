@@ -654,6 +654,7 @@ class MPIMaster(MPIProcess):
                     self.sync_children()
                 self.update = self.model.format_update()
             if (self.algo.validate_every > 0 and self.time_step > 0):
+                ##print ("to validation",self.time_step,self.algo.validate_every,self.time_step % self.algo.validate_every)
                 if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
                     epoch_logs = self.validate()
                 self.epoch += 1
@@ -714,11 +715,10 @@ class MPIMaster(MPIProcess):
         print ("MPIMaster {0} done training".format(self.ranks))
         # If we did not finish the last epoch, validate one more time.
         # (this happens if the batch size does not divide the dataset size)
-        if self.epoch < self.num_epochs:
+        if self.epoch < self.num_epochs or not self.histories.get(self.history_key(),None):
             epoch_logs = self.validate()
         self.send_exit_to_parent()
         self.send_history_to_parent()
-        self.algo.save()
         self.data.finalize()
         self.stop_time = time.time()
 
@@ -726,11 +726,19 @@ class MPIMaster(MPIProcess):
         ## for the uber master, save yourself
         out_dict = { "train_time" : self.stop_time - self.start_time,
                      "history":self.histories}
-        if meta:
+        if meta is not None:
             out_dict.update( meta )
+            
         if not json_name:
             json_name = 'master-history-%s-%s.json'%(os.getpid(), self.start_time)
-            
+
+        if self.model:
+            model_file = json_name.replace('.json','.model')
+            self.model.save( model_file )
+        if self.algo:
+            algo_file = json_name.replace('.json','.algo')
+            self.algo.save( algo_file )
+        
         with open( json_name, 'w') as out_file:
             out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
             
