@@ -81,6 +81,7 @@ class Data(object):
         relocated = []
         if self.caching_directory:
             goes_to = self.caching_directory
+            goes_to += str(os.getpid())
             os.system('mkdir %s '%goes_to)
             os.system('rm %s/* -f'%goes_to) ## clean first if anything
             for fn in file_names:
