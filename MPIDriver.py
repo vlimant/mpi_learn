@@ -86,6 +86,8 @@ if __name__ == '__main__':
     if args.torch:
         print("Using pytorch")
         import torch
+        if 'gpu' in device and not hide_device:
+            torch.cuda.set_device(int(device[-1]))
         model_builder = ModelPytorch(comm, filename=args.model_json, weights=args.model_weights, gpus=1)
     else:
         if args.tf: 
