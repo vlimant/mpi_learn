@@ -48,7 +48,11 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
 
     # Get the ranks of the other processes that share the same host
     # and determine which GPU to take on the host
-
+    if gpu_limit==0:
+        print ("required to not use gpu")
+        dev = 'cpu'
+        return dev
+    
     rank = comm.Get_rank()    
     host = MPI.Get_processor_name()
     hosts = comm.allgather(host)
@@ -62,6 +66,8 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
     for inode in range( comm.Get_size()):
         if rank == inode:
             gpu_list = get_gpu_list()
+            if gpu_limit>=0:
+                gpu_list = gpu_list[:gpu_limit] #limit the number of gpu
             if len(gpu_list) == 0:
                 print("No free GPU available. Using CPU instead.")
                 dev = 'cpu'
@@ -109,7 +115,7 @@ class MPIManager(object):
 
     def __init__(self, comm, data, algo, model_builder, num_epochs, train_list, 
                  val_list, num_masters=1, num_processes=1, synchronous=False,
-                 verbose=False, custom_objects={}, early_stopping=None,target_metric=None):
+                 verbose=False, custom_objects={}, early_stopping=None,target_metric=None, monitor=False):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -125,6 +131,7 @@ class MPIManager(object):
             val_list: list of validation data files
             synchronous: true if masters should operate in synchronous mode
             verbose: whether to make MPIProcess objects verbose
+            monitor: whether to monitor per-process resource (CPU/GPU) usage
         """
         self.data = data
         self.algo = algo
@@ -142,6 +149,7 @@ class MPIManager(object):
         self.val_list = val_list
         self.synchronous = synchronous
         self.verbose = verbose
+        self.monitor = monitor
         self.comm_block = None
         self.comm_masters = None
         self.comm_instance = None
@@ -250,7 +258,9 @@ class MPIManager(object):
                                       parent_comm=self.comm_block,
                                       parent_rank=self.parent_rank, 
                                       num_epochs=self.num_epochs,
-                                      verbose=self.verbose, custom_objects=self.custom_objects)
+                                      verbose=self.verbose,
+                                      monitor=self.monitor,
+                                      custom_objects=self.custom_objects)
 
     def figure_of_merit(self):
         ##if (self.comm_masters and self.comm_masters.Get_rank() == 0) or (self.comm_block.Get_rank() == 0):

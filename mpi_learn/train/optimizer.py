@@ -3,6 +3,7 @@
 import numpy as np
 import copy
 import pickle
+import os
 
 from ..utils import weights_from_shapes
 
@@ -19,7 +20,9 @@ class Optimizer(object):
     def apply_update(self, weights, gradient):
         raise NotImplementedError
 
-    def save(self, fn = 'algo_.pkl'):
+    def save(self, fn = None):
+        if fn is None:
+            fn = 'master-opt-{}.algo'.format( os.getpid())
         d= open(fn,'wb')
         pickle.dump(self, d)
         d.close()

@@ -286,7 +286,14 @@ class MPITModel(MPIModel):
             if self.gpus > 0: acc = acc.cpu()
             self.metrics.append(acc.numpy()[0])
         return np.asarray(self.metrics)
-        
+
+    def save(self, *args,**kwargs):
+        import torch
+        weights_filename = args[0]+'_w.torch'
+        arch_filename = args[0]+'.torch'
+        torch.save( self.model.state_dict(), weights_filename)
+        torch.save( self.model, arch_filename)
+            
 class ModelBuilder(object):
     """Class containing instructions for building neural net models.
         Derived classes should implement the build_model function.
