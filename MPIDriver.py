@@ -151,7 +151,7 @@ if __name__ == '__main__':
                           num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
                           num_masters=args.masters, num_processes=args.processes,
                           synchronous=args.synchronous, 
-                          verbose=args.verbose,
+                          verbose=args.verbose, monitor=True,
                           early_stopping=args.early_stopping,
                           target_metric=args.target_metric    )
 
