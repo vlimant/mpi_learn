@@ -85,8 +85,7 @@ class MPIProcess(object):
             print ("initializing horovod")
             self.process_comm.Barrier()
             hvd.init(comm=self.process_comm)
-            self.process_comm.Barrier()            
-            # After PyTorch integration whis must be updated
+            self.process_comm.Barrier()
             self.algo.worker_optimizer_builder.horovod_wrapper = True
         
         self.rank = parent_comm.Get_rank() if parent_comm else 0

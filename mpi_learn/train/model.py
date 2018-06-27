@@ -204,7 +204,11 @@ class MPITModel(MPIModel):
             if metric.lower() == 'acc' or metric.lower() == 'accuracy':
                 self.metrics_names.append('acc')
         ## we need a mapping of the kwargs into what is the optimizer that is getting used
-        self.optimizer = torch.optim.SGD(self.model.parameters(), 1.)
+        opt_builder = kwargs.get('optimizer')
+        if opt_builder is None:
+            self.optimizer = torch.optim.SGD(self.model.parameters(), 1.)
+        else:
+            self.optimizer = opt_builder.build_torch(self.model)
 
     def _accuracy(self, output, target, topk=(1,)):
         """Computes the precision@k for the specified values of k"""
