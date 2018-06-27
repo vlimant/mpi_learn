@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python
 
 ### This script creates an MPIManager object and launches distributed training.
 
@@ -169,12 +169,7 @@ if __name__ == '__main__':
         manager.free_comms()
         print ("Training finished in {0:.3f} seconds".format(delta_t))
 
-        # Make output dictionary
-        out_dict = { "args":vars(args),
-                     "history":histories,
-                     "train_time":delta_t,
-                     }
         json_name = '_'.join([model_name,args.trial_name,"history.json"]) 
-        with open( json_name, 'w') as out_file:
-            out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
+        manager.process.record_details(json_name,
+                                       meta={"args":vars(args)})
         print ("Wrote trial information to {0}".format(json_name))
