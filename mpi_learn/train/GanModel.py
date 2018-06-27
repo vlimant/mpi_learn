@@ -921,12 +921,14 @@ class GANModel(MPIModel):
 
     def prepare_geant4_data(self, **args):
         total = 0
-        if 'daint' in os.environ.get('HOST','') or 'daint' in os.environ.get('HOSTNAME',''):
+        host = os.environ.get('HOST',os.environ.get('HOSTNAME',socket.gethostname()))
+        if 'daint' in host:
             sortedpath = '/scratch/snx3000/vlimant/3DGAN/Sorted/sorted_*.hdf5'
+        elif 'titan' in host:
+            sortedpath = '//ccs/proj/csc291/DATA/3DGAN/sorted/sorted_*.hdf5'
         else:
             sortedpath = '/data/shared/3DGAN/sorted/sorted_*.hdf5'
 
-        #sortedpath='/data/shared/3DGan/sorted_*'
         m = 2  #number of moments
         var = {}
         energies, srtev = load_sorted(sortedpath)
