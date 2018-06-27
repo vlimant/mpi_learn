@@ -743,20 +743,21 @@ class MPIMaster(MPIProcess):
                      "history":self.histories}
         if meta is not None:
             out_dict.update( meta )
-            
+
         if not json_name:
             json_name = 'master-history-%s-%s.json'%(os.getpid(), self.start_time)
 
         if self.model:
             model_file = json_name.replace('.json','.model')
             self.model.save( model_file )
+
         if self.algo:
             algo_file = json_name.replace('.json','.algo')
             self.algo.save( algo_file )
-        
+
         with open( json_name, 'w') as out_file:
             out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
-            
+
         return self.histories
 
     def validate(self):
