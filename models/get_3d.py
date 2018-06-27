@@ -1,11 +1,12 @@
 import os
 import glob
 try:
-    #import h5py
+    import h5py
     pass
 except:
     print ("hum")
 import numpy as np
+import sys
 
 def get_data(datafile):
     #get data for training
@@ -29,15 +30,16 @@ def get_data(datafile):
 
 dest='/data/shared/3DGAN/'
 import socket
-host = os.environ.get('HOST', os.environ.get('HOSTNAME',socket.gethostname())
+host = os.environ.get('HOST', os.environ.get('HOSTNAME',socket.gethostname()))
 if 'daint' in host:
     dest='/scratch/snx3000/vlimant/3DGAN/'
 
+sub_split = int(sys.argv[1]) if len(sys.argv)>1 else 1
+                                          
 for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
     _,d,f = F.rsplit('/',2)
     if not 'Ele' in d: continue
     X = None
-    sub_split = 1
     if sub_split==1:
         nf = '%s/%s_%s.h5'%( dest,d,f)
         if os.path.isfile( nf) :
@@ -51,6 +53,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
         o['y']['a'] = np.ones(y.shape)
         o['y']['b'] = y
         o['y']['c'] = ecal
+        o.close()        
     else:
         for sub in range(sub_split):
             nf = '%s/%s_%s_sub%s.h5'%(dest, d,f,sub)
@@ -69,7 +72,7 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
             o['y']['c'] = ecal[splits[sub]:splits[sub+1],...]
             o.close()
             X = None
-    o.close()
+
 
 open('train_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:-4])))
 open('test_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-4:])))
@@ -79,3 +82,4 @@ open('test_small_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,g
 
 open('train_7_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:7])))
 open('test_1_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-1:])))
+    
