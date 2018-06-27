@@ -252,7 +252,8 @@ class MPITModel(MPIModel):
         loss = self.loss(pred, Variable(target))
         loss.backward()
         self.optimizer.step()
-        self.metrics = [loss.data.numpy()[0]] if self.gpus == 0 else [loss.data.cpu().numpy()[0]]
+        l_data = loss.data.numpy() if self.gpus == 0 else loss.data.cpu().numpy()
+        self.metrics = [l_data] if l_data.shape==() else [l_data[0]]        
         if 'acc' in self.metrics_names: # compute the accuracy
             acc = self._accuracy(pred.data, target, topk=(1,))[0]
             if self.gpus > 0: acc = acc.cpu()
@@ -280,7 +281,8 @@ class MPITModel(MPIModel):
             target = target.cuda()
         pred = self.model.forward(Variable(x, volatile=True))
         loss = self.loss(pred, Variable(target, volatile=True))
-        self.metrics = [loss.data.numpy()[0]] if self.gpus == 0 else [loss.data.cpu().numpy()[0]]
+        l_data = loss.data.numpy() if self.gpus == 0 else loss.data.cpu().numpy()
+        self.metrics = [l_data] if l_data.shape==() else [l_data[0]]        
         if 'acc' in self.metrics_names: # compute the accuracy
             acc = self._accuracy(pred.data, target, topk=(1,))[0]
             if self.gpus > 0: acc = acc.cpu()
