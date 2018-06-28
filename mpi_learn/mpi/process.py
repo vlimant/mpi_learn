@@ -611,7 +611,7 @@ class MPIMaster(MPIProcess):
                 child_comm.Get_size()))
         if self.num_sync_workers > 1:
             print ("Will wait for updates from {0:d} workers before synchronizing".format(self.num_sync_workers))
-        super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, 
+        super(MPIMaster, self).__init__( parent_comm, process_comm=None,parent_rank=parent_rank, data=data, 
                 algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
                 verbose=verbose, monitor=monitor, custom_objects=custom_objects )
 
