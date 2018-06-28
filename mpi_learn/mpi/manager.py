@@ -380,9 +380,10 @@ class MPIKFoldManager(MPIManager):
     def __init__( self, NFolds, comm, data, algo, model_builder, num_epochs, train_list, 
                   val_list, num_masters=1,
                   num_process=1,
-                  synchronous=False, 
+                  synchronous=False,
                   verbose=False, custom_objects={},
-                  early_stopping=None,target_metric=None):
+                  early_stopping=None,target_metric=None,
+                  monitor=False):
         self.comm_world = comm
         self.comm_fold = None
         self.fold_num = None
@@ -392,7 +393,8 @@ class MPIKFoldManager(MPIManager):
                                       val_list, num_masters,num_process,
                                       synchronous,
                                       verbose, custom_objects,
-                                      early_stopping,target_metric)
+                                      early_stopping,target_metric,
+                                      monitor)
             return
         
         if int(comm.Get_size() / float(NFolds))<=1:
@@ -419,7 +421,7 @@ class MPIKFoldManager(MPIManager):
                                   val_list_on_fold, num_masters,num_process,
                                   synchronous,
                                   verbose, custom_objects,
-                                  early_stopping,target_metric)
+                                  early_stopping,target_metric,monitor)
 
     def free_comms(self):
         self.manager.free_comms()
