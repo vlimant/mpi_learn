@@ -1,8 +1,3 @@
-from mpi_learn.train.GanModel import GANModel
-import h5py
-import setGPU
-import json
-import time
 import optparse
 
 parser = optparse.OptionParser()
@@ -12,11 +7,19 @@ parser.add_option('--test',action='store_true')
 parser.add_option('--fresh',action='store_true')
 parser.add_option('--fom', action='store_true')
 parser.add_option('--tag',default='')
+parser.add_option('--max',type='int', default = 0)
 parser.add_option('--lr',type='float',default=0.0)
 parser.add_option('--epochs', type='int', default=3)
-parser.add_option('--inmem',action='store_true')
+parser.add_option('--cache',default=None)
 
 (options,args) = parser.parse_args()
+
+from mpi_learn.train.GanModel import GANModel
+from mpi_learn.train.data import H5Data
+import h5py
+import setGPU
+import json
+import time
 
 
 gan_args = {
@@ -72,6 +75,13 @@ else:
 print (tag,"is the option")
 
 files = list(filter(None,open('train_3d.list').read().split('\n')))
+data = H5Data( batch_size = 100,
+               cache = options.cache,
+               preloading=0,
+               features_name='X', labels_name='y')
+data.set_file_names(files)
+"""
+
 if options.inmem:
     import os
     relocated = []
@@ -83,25 +93,25 @@ if options.inmem:
             if os.system('cp %s %s'%( fn ,relocate))==0:
                 relocated.append( relocate )
     files = relocated
-
+"""
 history = {}
 thistory = {}
+fhistory = {}
 etimes=[]
-ftimes={}
 start = time.mktime(time.gmtime())
 
 
 train_me = options.train
 over_test= options.test
-max_batch = None
+max_batch = options.max
 ibatch=0
 def dump():
     open('simple_train_%s.json'%tag,'w').write(json.dumps(
         {
             'h':history,
             'th':thistory,
+            'fh':fhistory,
             'et':etimes,
-            'ft':ftimes
             } ))    
 
 nepochs = options.epochs
@@ -110,65 +120,42 @@ histories={}
 for e in range(nepochs):
     history[e] = []
     thistory[e] = []
-    ftimes[e] = []
+    fhistory[e] = []
     e_start = time.mktime(time.gmtime())
-    if max_batch and ibatch>max_batch:
-        break
-    print ("starting epoch",e,"with",len(files),"files")
-    for f in files:
-        f_start = time.mktime(time.gmtime())            
-        print ("new file",f,"epoch",e)
-        h=h5py.File(f)
-        X = h['X']
-        cat = h['y']['a']
-        E = h['y']['b']
-        cellE = h['y']['c']
-        
-        
-        N = X.shape[0]
-        bs =100
-        start=0
-        end = start+bs
-        while end<N:
-            if max_batch and ibatch>max_batch:
-                break
-            sub_X = X[start:end]
-            sub_Y = [cat[start:end], E[start:end],cellE[start:end]]
-            ibatch+=1
-            #print (ibatch,ibatch>max_batch,max_batch)
-            if over_test or not train_me:
-                t_losses = gm.test_on_batch(sub_X,sub_Y)
-                l = gm.get_logs( t_losses  ,val=True)
-                gm.update_history( l , histories)
-                t_losses = [list(map(float,l)) for l in t_losses]
-                thistory[e].append( t_losses )
-            if train_me:
-                losses = gm.train_on_batch(sub_X,sub_Y)
-                l = gm.get_logs( losses )
-                gm.update_history( l , histories)                
-                losses = [list(map(float,l)) for l in losses]
-                history[e].append( losses )
-            if options.fom:
-                fom = gm.figure_of_merit()
-                print ("figure of merit",fom)
-            start += bs
-            end += bs
-        if options.fom:
-            fom = gm.figure_of_merit()
-            print ("figure of merit",fom)            
-        gm.generator.save_weights('simple_generator_%s.h5'%tag)
-        gm.discriminator.save_weights('simple_discriminator_%s.h5'%tag)
-        gm.combined.save_weights('simple_combined_%s.h5'%tag)
-        h.close()
-        f_stop = time.mktime(time.gmtime())
-        print (f_stop - f_start,"[s] for file",f)
-        ftimes[e].append( f_stop - f_start )
-        dump()
+    for sub_X,sub_Y in data.generate_data():
+        ibatch+=1
+        #print (ibatch,ibatch>max_batch,max_batch)
+        if over_test or not train_me:
+            t_losses = gm.test_on_batch(sub_X,sub_Y)
+            l = gm.get_logs( t_losses  ,val=True)
+            gm.update_history( l , histories)
+            t_losses = [list(map(float,l)) for l in t_losses]
+            thistory[e].append( t_losses )
+        if train_me:
+            losses = gm.train_on_batch(sub_X,sub_Y)
+            l = gm.get_logs( losses )
+            gm.update_history( l , histories)                
+            losses = [list(map(float,l)) for l in losses]
+            history[e].append( losses )
         if max_batch and ibatch>max_batch:
             break
+            
+        #if options.fom:
+        #    fom = gm.figure_of_merit()
+        #    print ("figure of merit",fom)
 
+    if options.fom:
+        fom = gm.figure_of_merit()
+        print ("figure of merit",fom)
+        fhistory[e].append( fom )
+    gm.generator.save_weights('simple_generator_%s.h5'%tag)
+    gm.discriminator.save_weights('simple_discriminator_%s.h5'%tag)
+    gm.combined.save_weights('simple_combined_%s.h5'%tag)
+    dump()
+    if max_batch and ibatch>max_batch:
+        break
         
     e_stop = time.mktime(time.gmtime())
     print (e_stop - e_start,"[s] for epoch",e)
     etimes.append( e_stop - e_start)
-    dump()
+dump()
