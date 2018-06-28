@@ -10,6 +10,7 @@ parser.add_option('--restart',action='store_true')
 parser.add_option('--train',action='store_true')
 parser.add_option('--test',action='store_true')
 parser.add_option('--fresh',action='store_true')
+parser.add_option('--fom', action='store_true')
 parser.add_option('--tag',default='')
 parser.add_option('--lr',type='float',default=0.0)
 parser.add_option('--epochs', type='int', default=3)
@@ -147,10 +148,14 @@ for e in range(nepochs):
                 gm.update_history( l , histories)                
                 losses = [list(map(float,l)) for l in losses]
                 history[e].append( losses )
-            fom = gm.figure_of_merit()
-            print ("figure of merit",fom)
+            if options.fom:
+                fom = gm.figure_of_merit()
+                print ("figure of merit",fom)
             start += bs
             end += bs
+        if options.fom:
+            fom = gm.figure_of_merit()
+            print ("figure of merit",fom)            
         gm.generator.save_weights('simple_generator_%s.h5'%tag)
         gm.discriminator.save_weights('simple_discriminator_%s.h5'%tag)
         gm.combined.save_weights('simple_combined_%s.h5'%tag)
