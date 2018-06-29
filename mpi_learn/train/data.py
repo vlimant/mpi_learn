@@ -102,7 +102,15 @@ class Data(object):
             
         if self.fpl:
             self.fpl.files_list = self.file_names
-            
+
+    def inf_generate_data(self):
+        while True:
+            try:
+                for B in self.generate_data():
+                    yield B
+            except StopIteration as si:
+                print ("start over generator loop")
+                
     def generate_data(self):
        """Yields batches of training data until none are left."""
        leftovers = None
