@@ -14,12 +14,14 @@ from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
 from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF,ModelPytorch
 from mpi_learn.utils import import_keras
+from mpi_learn.train.trace import Trace
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose',help='display metrics for each training batch',action='store_true')
     parser.add_argument('--profile',help='profile theano code',action='store_true')
     parser.add_argument('--monitor',help='Monitor cpu and gpu utilization', action='store_true')
+    parser.add_argument('--trace',help='Record timeline of activity', action='store_true')
     parser.add_argument('--tf', help='use tensorflow backend', action='store_true')
     parser.add_argument('--torch', help='use pytorch', action='store_true')
     
@@ -77,6 +79,8 @@ if __name__ == '__main__':
         val_list = [ s.strip() for s in val_list_file.readlines() ]
 
     comm = MPI.COMM_WORLD.Dup()
+
+    if args.trace: Trace.enable()
 
     # Theano is the default backend; use tensorflow if --tf is specified.
     # In the theano case it is necessary to specify the device before importing.
@@ -176,3 +180,6 @@ if __name__ == '__main__':
         manager.process.record_details(json_name,
                                        meta={"args":vars(args)})            
         print ("Wrote trial information to {0}".format(json_name))
+
+    comm.barrier()
+    if args.trace: Trace.collect(clean=True)

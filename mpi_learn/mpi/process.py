@@ -8,6 +8,7 @@ import time
 from mpi4py import MPI
 
 from ..train.monitor import Monitor
+from ..train.trace import Trace, trace
 from ..utils import Error, weights_from_shapes, shapes_from_weights
 
 ### Classes ###
@@ -93,6 +94,9 @@ class MPIProcess(object):
             MPI.COMM_WORLD.Get_rank(),
             self.parent_comm.Get_rank() if self.parent_comm is not None else '-',
             self.process_comm.Get_rank() if self.process_comm is not None else '-')
+
+        Trace.set_process_name(type(self).__name__ + " " + self.ranks)
+
         self.build_model()
         if (self.parent_rank is not None and self.parent_comm is not None):
             self.bcast_weights( self.parent_comm )
@@ -180,6 +184,7 @@ class MPIProcess(object):
             return { name:np.asscalar(metric) for name, metric in 
                     zip( self.model.metrics_names(), metrics ) }
 
+    @trace(category="MPI")
     def do_send_sequence(self):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
@@ -494,6 +499,7 @@ class MPIWorker(MPIProcess):
             In each step, train on one batch of input data, then send the update to the master
             and wait to receive a new set of weights.  When done, send 'exit' signal to parent.
         """
+        Trace.begin("train")
         self.check_sanity()
 
         self.await_signal_from_parent()
@@ -502,6 +508,7 @@ class MPIWorker(MPIProcess):
         exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
             print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, epoch))
+            Trace.begin("epoch")
             if self.monitor:
                 self.monitor.start_monitor()
             epoch_metrics = np.zeros((1,))
@@ -515,7 +522,9 @@ class MPIWorker(MPIProcess):
                     if self.process_comm.Get_rank()!=0:
                         self.model.set_weights(self.weights)
 
+                Trace.begin("train_on_batch")
                 train_metrics = self.model.train_on_batch( x=batch[0], y=batch[1] )
+                Trace.end("train_on_batch")
                 if epoch_metrics.shape != train_metrics.shape:
                     epoch_metrics = np.zeros( train_metrics.shape)
                 epoch_metrics += train_metrics
@@ -537,17 +546,22 @@ class MPIWorker(MPIProcess):
             epoch_metrics = epoch_metrics / float(i_batch+1)
             l = self.model.get_logs( epoch_metrics )
             self.update_history( l )
+            Trace.end("epoch")
 
             if self.stop_training:
                 break
 
         print ("MPIWorker {0} signing off".format(self.ranks))
+        stats = None
         if self.monitor:
-            self.update_monitor( self.monitor.get_stats() )        
+            stats = self.monitor.get_stats()
+            self.update_monitor( stats )
+        Trace.end("train", monitoring_stats=stats)
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()
 
+    @trace
     def compute_update(self):
         """Compute the update from the new and old sets of model weights"""
         self.update = self.algo.compute_update( self.weights, self.model.get_weights() )
@@ -711,6 +725,7 @@ class MPIMaster(MPIProcess):
             Receive messages from workers and processes each message until training is done.
             When finished, signal the parent process that training is complete.
         """
+        Trace.begin("train")
         self.start_time = time.time()
         self.check_sanity()
         self.bcast_weights( comm=self.child_comm )
@@ -735,6 +750,8 @@ class MPIMaster(MPIProcess):
         self.send_history_to_parent()
         self.data.finalize()
         self.stop_time = time.time()
+        Trace.end("train")
+
 
     def record_details(self, json_name=None, meta=None):
         ## for the uber master, save yourself
@@ -762,6 +779,7 @@ class MPIMaster(MPIProcess):
     def validate(self):
         """Compute the loss on the validation data.
             Return a dictionary of validation metrics."""
+        Trace.begin("validation", "VALIDATION")
         tell = True
         if self.has_parent:
             return {}
@@ -830,6 +848,7 @@ class MPIMaster(MPIProcess):
         print ("Validation metrics:")
         self.print_metrics(val_metrics)
         if tell: print ("Ending validation")
+        Trace.end("validation", "VALIDATION")
         return None
 
     def apply_update(self):
