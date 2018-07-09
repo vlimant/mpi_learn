@@ -10,6 +10,7 @@ from mpi4py import MPI
 from time import time,sleep
 
 from mpi_learn.mpi.manager import MPIManager, get_device
+from mpi_learn.mpi.single_manager import MPISingleManager
 from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
 from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF,ModelPytorch
@@ -22,6 +23,7 @@ if __name__ == '__main__':
     parser.add_argument('--monitor',help='Monitor cpu and gpu utilization', action='store_true')
     parser.add_argument('--tf', help='use tensorflow backend', action='store_true')
     parser.add_argument('--torch', help='use pytorch', action='store_true')
+    parser.add_argument('--single', help='run a single process', action='store_true')
     
     # model arguments
     parser.add_argument('model_json', help='JSON file containing model architecture')
@@ -154,14 +156,22 @@ if __name__ == '__main__':
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
-    manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
-                          num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
-                          num_masters=args.masters, num_processes=args.processes,
-                          synchronous=args.synchronous, 
-                          verbose=args.verbose, monitor=args.monitor,
-                          early_stopping=args.early_stopping,
-                          target_metric=args.target_metric    )
-
+    if(not args.single):
+        manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
+                            num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
+                            num_masters=args.masters, num_processes=args.processes,
+                            synchronous=args.synchronous, 
+                            verbose=args.verbose, monitor=args.monitor,
+                            early_stopping=args.early_stopping,
+                            target_metric=args.target_metric    )
+    else:
+        manager = MPISingleManager( comm=comm, data=data, algo=algo, model_builder=model_builder,
+                            num_epochs=args.epochs, train_list=train_list, val_list=val_list, 
+                            num_masters=args.masters, num_processes=args.processes,
+                            synchronous=args.synchronous, 
+                            verbose=args.verbose, monitor=args.monitor,
+                            early_stopping=args.early_stopping,
+                            target_metric=args.target_metric    )
     # Process 0 launches the training procedure
     if comm.Get_rank() == 0:
         print (algo)
