@@ -4,6 +4,7 @@ from mpi_learn.utils import load_model, get_device_name
 from .optimizer import OptimizerBuilder
 import numpy as np
 import copy
+import sys
 
 class MPIModel(object):
     """Class that abstract all details of the model
@@ -14,6 +15,15 @@ class MPIModel(object):
         self.histories = {}
         if model and models:
             raise Exception("Cannot specify single and multiple models")
+    
+    def get_copy(self):
+        import keras
+        print("Err ok", file=sys.stderr)
+        print ("Clone model")
+        model_copy = keras.models.clone_model(self.model)
+        print ("Setting weights")
+        model_copy.set_weights(self.model.get_weights())
+        return model_copy
 
     def print_metrics(self, metrics):
         if self.model:

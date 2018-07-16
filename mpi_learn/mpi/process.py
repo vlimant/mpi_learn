@@ -4,6 +4,7 @@ import os,sys,json
 import numpy as np
 import socket
 import time
+import threading, queue
 
 from mpi4py import MPI
 
@@ -600,7 +601,8 @@ class MPIMaster(MPIProcess):
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
             num_epochs=1, data=None, algo=None, model_builder=None, 
-                 num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None):
+                 num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None,
+                 threaded_validation=False):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -625,6 +627,8 @@ class MPIMaster(MPIProcess):
                 child_comm.Get_size()))
         if self.num_sync_workers > 1:
             print ("Will wait for updates from {0:d} workers before synchronizing".format(self.num_sync_workers))
+        self.threaded_validation = threaded_validation
+
         super(MPIMaster, self).__init__( parent_comm, process_comm=None,parent_rank=parent_rank, data=data, 
                 algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
                 verbose=verbose, monitor=monitor, custom_objects=custom_objects )
@@ -684,9 +688,10 @@ class MPIMaster(MPIProcess):
             if (self.algo.validate_every > 0 and self.time_step > 0):
                 ##print ("to validation",self.time_step,self.algo.validate_every,self.time_step % self.algo.validate_every)
                 if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
-                    epoch_logs = self.validate()
+                    self.validate(self.weights)
                     self.epoch += 1
         else:
+            print("Master refused one update")
             self.sync_child(source)
 
     def do_worker_finish_sequence(self, worker_id):
@@ -731,6 +736,11 @@ class MPIMaster(MPIProcess):
         self.bcast_weights( comm=self.child_comm )
         self.signal_children()
 
+        if self.threaded_validation:
+            self.validation_queue = queue.Queue()
+            self.validation_thread = threading.Thread(target=MPIMaster.validation_worker, args = (self, ))
+            self.validation_thread.start()
+
         status = MPI.Status()
         self.running_workers = list(range(1, self.num_workers+1))
         self.waiting_workers_list = []
@@ -745,7 +755,10 @@ class MPIMaster(MPIProcess):
         # If we did not finish the last epoch, validate one more time.
         # (this happens if the batch size does not divide the dataset size)
         if self.epoch < self.num_epochs or not self.histories.get(self.history_key(),None):
-            epoch_logs = self.validate()
+            epoch_logs = self.validate(self.weights)
+        if self.threaded_validation:
+            self.validation_queue.join()
+            self.validation_thread.join()
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()
@@ -776,25 +789,52 @@ class MPIMaster(MPIProcess):
 
         return self.histories
 
-    def validate(self):
+    def validation_worker(self):
+        while True:
+            print("Master: Validation thread started")
+            item = self.validation_queue.get()
+            if item is None:
+                break
+            weights, model = item
+            print("Master: Validation thread got work")
+            self.validate_aux(weights, model)
+            self.validation_queue.task_done()
+
+    def validate(self, weights):
+        if self.threaded_validation:
+            print("starting moel copy")
+            import copy
+            model = self.model.get_copy()
+            self.algo.compile_model(model)
+            print("Got a copy")
+            self.validation_queue.put((weights, model))
+        else:
+            import copy
+            model = self.model.get_copy()
+            self.algo.compile_model(model)
+            return self.validate_aux(weights, model)
+        
+    
+    def validate_aux(self, weights, model):
         """Compute the loss on the validation data.
             Return a dictionary of validation metrics."""
         Trace.begin("validation", "VALIDATION")
         tell = True
         if self.has_parent:
             return {}
-        self.model.set_weights(self.weights)
+        #print ("Setting weights")
+        #model.set_weights(weights)
         if tell: print ("Starting validation")
         val_metrics = np.zeros((1,))
         i_batch = 0
         for i_batch, batch in enumerate(self.data.generate_data()):
-            new_val_metrics =  self.model.test_on_batch(x=batch[0], y =batch[1] )
+            new_val_metrics =  model.test_on_batch(x=batch[0], y =batch[1] )
             if val_metrics.shape != new_val_metrics.shape:
                 val_metrics =  np.zeros(new_val_metrics.shape)
             val_metrics += new_val_metrics
             if self._short_batches and i_batch>self._short_batches: break
         val_metrics = val_metrics / float(i_batch+1)
-        l = self.model.get_logs(val_metrics, val=True)
+        l = model.get_logs(val_metrics, val=True)
         self.update_history( l )
 
         if self.target_metric:
