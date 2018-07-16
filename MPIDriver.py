@@ -143,7 +143,7 @@ if __name__ == '__main__':
     # We initialize the Data object with the training data list
     # so that we can use it to count the number of training examples
     data.set_file_names( train_list )
-    validate_every = data.count_data()/args.batch 
+    validate_every = int(data.count_data()/args.batch)
 
     # Some input arguments may be ignored depending on chosen algorithm
     if args.easgd:
