@@ -139,6 +139,10 @@ class MPIProcess(object):
         print("building model",socket.gethostname(),self.ranks)
         self.model = self.model_builder.build_model()
 
+
+        self.validation_model = self.model_builder.build_model()
+        self.algo.compile_model( self.validation_model )
+
         if tell_me: print ("weight pre-compile",socket.gethostname(),self.ranks)
         self.weights = self.model.get_weights()
         self.compile_model()
@@ -802,12 +806,15 @@ class MPIMaster(MPIProcess):
                 self.validate_aux(weights, model)
             except Exception as e:
                 print ("threaded validation run into problems")
+                import traceback
+                traceback.print_exc()
                 print (e)
             self.validation_queue.task_done()
 
     def validate(self, weights):
         if self.threaded_validation:
-            model = self.model.get_copy()
+            #model = self.model.get_copy()
+            model = self.validation_model
             print("Added to queue")
             self.validation_queue.put((weights, model))
         else:
@@ -823,8 +830,9 @@ class MPIMaster(MPIProcess):
         tell = True
         if self.has_parent:
             return {}
-        #print ("Setting weights")
+        print ("Setting weights")
         model.set_weights(weights)
+
         if tell: print ("Starting validation")
         val_metrics = np.zeros((1,))
         i_batch = 0
