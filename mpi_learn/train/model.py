@@ -17,12 +17,16 @@ class MPIModel(object):
             raise Exception("Cannot specify single and multiple models")
     
     def get_copy(self):
-        import keras
-        print("Err ok", file=sys.stderr)
-        print ("Clone model")
-        model_copy = keras.models.clone_model(self.model)
-        print ("Setting weights")
-        model_copy.set_weights(self.model.get_weights())
+        #import keras
+        #print ("Clone model")
+        #model_copy = keras.models.clone_model(self.model)
+        #model_copy = copy.deepcopy(self)
+        #print ("Setting weights")
+
+
+        # Working for torch
+        import copy
+        model_copy = copy.copy(self)
         return model_copy
 
     def print_metrics(self, metrics):

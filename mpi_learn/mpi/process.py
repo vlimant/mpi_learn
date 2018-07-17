@@ -602,7 +602,7 @@ class MPIMaster(MPIProcess):
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
             num_epochs=1, data=None, algo=None, model_builder=None, 
                  num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None,
-                 threaded_validation=False):
+                 threaded_validation=True):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -790,6 +790,7 @@ class MPIMaster(MPIProcess):
         return self.histories
 
     def validation_worker(self):
+        """Main function of the validation thread"""
         while True:
             print("Master: Validation thread started")
             item = self.validation_queue.get()
@@ -797,21 +798,21 @@ class MPIMaster(MPIProcess):
                 break
             weights, model = item
             print("Master: Validation thread got work")
-            self.validate_aux(weights, model)
+            try:
+                self.validate_aux(weights, model)
+            except Exception as e:
+                print ("threaded validation run into problems")
+                print (e)
             self.validation_queue.task_done()
 
     def validate(self, weights):
         if self.threaded_validation:
-            print("starting moel copy")
-            import copy
             model = self.model.get_copy()
-            self.algo.compile_model(model)
-            print("Got a copy")
+            print("Added to queue")
             self.validation_queue.put((weights, model))
         else:
-            import copy
-            model = self.model.get_copy()
-            self.algo.compile_model(model)
+            #model = self.model.get_copy()
+            #self.algo.compile_model(model)
             return self.validate_aux(weights, model)
         
     
@@ -823,7 +824,7 @@ class MPIMaster(MPIProcess):
         if self.has_parent:
             return {}
         #print ("Setting weights")
-        #model.set_weights(weights)
+        model.set_weights(weights)
         if tell: print ("Starting validation")
         val_metrics = np.zeros((1,))
         i_batch = 0
