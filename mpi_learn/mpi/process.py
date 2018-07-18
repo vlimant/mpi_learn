@@ -132,12 +132,12 @@ class MPIProcess(object):
             self.process_comm.Barrier()
         return self._is_shadow
 
-    def build_model(self, is_master=True):
+    def build_model(self, local_session=True):
         """Builds the Keras model and updates model-related attributes"""
 
         tell_me = self.tell_build
         print("building model",socket.gethostname(),self.ranks)
-        self.model = self.model_builder.build_model(is_master=is_master)
+        self.model = self.model_builder.build_model(local_session=local_session)
 
         if tell_me: print ("weight pre-compile",socket.gethostname(),self.ranks)
         self.weights = self.model.get_weights()
@@ -500,7 +500,7 @@ class MPIWorker(MPIProcess):
 
         self.validation_model = self.model_builder.build_model()
         self.algo.compile_model( self.validation_model )
-        super(MPIWorker, self).build_model(is_master=False)
+        super(MPIWorker, self).build_model(local_session=False)
 
     def train(self):
         """Wait for the signal to train. Then train for num_epochs epochs.
@@ -698,7 +698,6 @@ class MPIMaster(MPIProcess):
                     self.validate(self.weights)
                     self.epoch += 1
         else:
-            print("Master refused one update")
             self.sync_child(source)
 
     def do_worker_finish_sequence(self, worker_id):
@@ -764,11 +763,9 @@ class MPIMaster(MPIProcess):
         if self.epoch < self.num_epochs or not self.histories.get(self.history_key(),None):
             epoch_logs = self.validate(self.weights)
         if self.threaded_validation:
-            print("waiting for join")
             self.validation_queue.put(None)
             self.validation_queue.join()
             self.validation_thread.join()
-            print("join done")
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()
@@ -799,35 +796,25 @@ class MPIMaster(MPIProcess):
 
         return self.histories
 
-    def cleanup(self):
-        return 
-        self.model.close()
-        self.validation_model.close()
-
     def validation_worker(self):
         """Main function of the validation thread"""
+        print("Validation thread started")
         while True:
-            print("Master: Validation thread waiting for work")
             item = self.validation_queue.get()
             if item is None:
-                print ("validation worker thread signing off")
+                print ("Validation thread signing off")
                 self.validation_queue.task_done()
                 break
             weights, model = item
-            print("Master: Validation thread got work")
             try:
                 self.validate_aux(weights, model)
             except Exception as e:
-                print ("threaded validation run into problems")
-                import traceback
-                traceback.print_exc()
                 print (e)
             self.validation_queue.task_done()
 
     def validate(self, weights):
         if self.threaded_validation:
             model = self.validation_model
-            print("Added to queue")
             self.validation_queue.put((weights, model))
         else:
             return self.validate_aux(weights, model)
@@ -840,7 +827,6 @@ class MPIMaster(MPIProcess):
         tell = True
         if self.has_parent:
             return {}
-        print ("Setting weights")
         model.set_weights(weights)
 
         if tell: print ("Starting validation")
@@ -952,6 +938,7 @@ class MPIMaster(MPIProcess):
     def build_model(self):
         """Builds the Keras model and updates model-related attributes"""
 
-        self.validation_model = self.model_builder.build_model()
-        self.algo.compile_model( self.validation_model )
-        super(MPIMaster, self).build_model(is_master=True)
+        if self.threaded_validation:
+            self.validation_model = self.model_builder.build_model()
+            self.algo.compile_model( self.validation_model )
+        super(MPIMaster, self).build_model(local_session=True)

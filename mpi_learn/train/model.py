@@ -26,20 +26,6 @@ class MPIModel(object):
         self.histories = {}
         if model and models:
             raise Exception("Cannot specify single and multiple models")
-    
-    #def get_copy(self):
-    #    import keras
-    #    #print ("Clone model")
-    #    
-    #    #model_copy = copy.deepcopy(self)
-    #    #print ("Setting weights")
-#
-#
-    #    # Working for torch
-    #    import copy
-    #    model_copy = copy.copy(self)
-    #    model_copy.model = keras.models.clone_model(self.model)
-    #    return model_copy
 
     @session
     def print_metrics(self, metrics):
@@ -377,7 +363,7 @@ class ModelFromJson(ModelBuilder):
         self.custom_objects = custom_objects
         super(ModelFromJson, self).__init__(comm)
 
-    def build_model(self, is_master=True):
+    def build_model(self, local_session=True):
         if type(self.filename) == list:
             models = []
             for fn in self.filename:
@@ -424,10 +410,26 @@ class ModelFromJsonTF(ModelBuilder):
             dev_type = 'cpu'
         return get_device_name(dev_type, dev_num, backend='tensorflow')
 
-    def build_model(self, is_master = True):
+    def build_model_aux(self):
         import keras.backend as K
 
-        if is_master:
+        with K.tf.device(self.device):
+            if type(self.filename) == list:
+                models = []
+                self.weights = self.weights.split(',') if self.weights else [None]*len(self.filename)
+                for fn,w in zip(self.filename, self.weights):
+                    models.append(load_model(filename=fn, weights_file=w))
+                return MPIModel(models = models)
+            else:
+                model = load_model(filename=self.filename, json_str=self.json_str, 
+                                custom_objects=self.custom_objects, weights_file=self.weights)
+                return MPIModel(model = model)
+
+
+    def build_model(self, local_session = True):
+        import keras.backend as K
+
+        if local_session:
             graph = K.tf.Graph()
             session = K.tf.Session(graph=graph, config=K.tf.ConfigProto(
                 allow_soft_placement=True, log_device_placement=False,
@@ -436,36 +438,17 @@ class ModelFromJsonTF(ModelBuilder):
 
             with graph.as_default():
                 with session.as_default():
-                    with K.tf.device(self.device):
-                        if type(self.filename) == list:
-                            models = []
-                            self.weights = self.weights.split(',') if self.weights else [None]*len(self.filename)
-                            for fn,w in zip(self.filename, self.weights):
-                                models.append(load_model(filename=fn, weights_file=w))
-                            return MPIModel(models = models)
-                        else:
-                            model = load_model(filename=self.filename, json_str=self.json_str, 
-                                            custom_objects=self.custom_objects, weights_file=self.weights)
-                            ret_model = MPIModel(model = model)
-                            ret_model.session = session
-                            ret_model.graph = graph
-                            return ret_model
-        else: #is worker
+                    import keras.backend as K
+                    ret_model = self.build_model_aux()
+                    ret_model.session = session
+                    ret_model.graph = graph
+                    return ret_model
+        else:
             K.set_session( K.tf.Session( config=K.tf.ConfigProto(
                 allow_soft_placement=True, log_device_placement=False,
                 gpu_options=K.tf.GPUOptions(
                     per_process_gpu_memory_fraction=1./self.comm.Get_size()) ) ) )
-            with K.tf.device(self.device):
-                if type(self.filename) == list:
-                    models = []
-                    self.weights = self.weights.split(',') if self.weights else [None]*len(self.filename)
-                    for fn,w in zip(self.filename, self.weights):
-                        models.append(load_model(filename=fn, weights_file=w))
-                    return MPIModel(models = models)
-                else:
-                    model = load_model(filename=self.filename, json_str=self.json_str, 
-                                    custom_objects=self.custom_objects, weights_file=self.weights)
-                    return MPIModel(model = model)
+            return self.build_model_aux()
 
 
 class ModelPytorch(ModelBuilder):
@@ -478,7 +461,7 @@ class ModelPytorch(ModelBuilder):
         self.weights = weights
         self.gpus=gpus
 
-    def build_model(self, is_master=True):
+    def build_model(self, local_session=True):
         import torch
         model = torch.load(self.filename)
         if self.weights:
