@@ -799,6 +799,11 @@ class MPIMaster(MPIProcess):
 
         return self.histories
 
+    def cleanup(self):
+        return 
+        self.model.close()
+        self.validation_model.close()
+
     def validation_worker(self):
         """Main function of the validation thread"""
         while True:
