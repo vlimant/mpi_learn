@@ -1,10 +1,11 @@
 ### Predefined Keras models
 
+import setGPU
 import numpy as np
 try:
-    from keras.models import Sequential
-    from keras.layers import Dense, Activation, Dropout, Flatten
-    from keras.layers import Convolution2D, MaxPooling2D
+    from keras.models import Sequential, Model
+    from keras.layers import Dense, Activation, Dropout, Flatten, Input
+    from keras.layers import Convolution2D, MaxPooling2D, Conv2D
     import keras.backend as K
 except:
     print ("no keras support")
@@ -53,11 +54,16 @@ def make_cifar10_model(**args):
     pool_size = (ps,ps)
     
     # tune the dropout rates independently
-    do1 = args.get('dropout1', 0.25)
-    do2 = args.get('dropout2', 0.25)
-    do3 = args.get('dropout3', 0.25)
-    do4 = args.get('dropout4', 0.25)
-    do5 = args.get('dropout5', 0.5)
+    #do1 = args.get('dropout1', 0.25)
+    #do2 = args.get('dropout2', 0.25)
+    #do3 = args.get('dropout3', 0.25)
+    do4 = args.get('dropout1', 0.25)
+    do5 = args.get('dropout2', 0.5)
+    #do1 = args.get('dropout1', 0.)
+    #do2 = args.get('dropout2', 0.)
+    #do3 = args.get('dropout3', 0.)
+    #do4 = args.get('dropout4', 0.)
+    #do5 = args.get('dropout5', 0.)
     
     # tune the dense layers independently
     dense1 = args.get('dense1', 512)
@@ -67,37 +73,69 @@ def make_cifar10_model(**args):
         input_shape = (3, img_rows, img_cols)
     else:
         input_shape = (img_rows, img_cols, 3)
+
+    #act = 'sigmoid'
+    act = 'relu'
+        
+    i = Input( input_shape)
+    l = Conv2D(nb_filters1,( ks, ks), padding='same', activation = act)(i)
+    #l = Conv2D(nb_filters1, (ks, ks), activation=act)(l)
+    l = MaxPooling2D(pool_size=pool_size)(l)
+    #l = Dropout(do1)(l)
+
+    l = Conv2D(nb_filters2, (ks, ks), padding='same',activation=act)(l)
+    #l = Conv2D(nb_filters2, (ks, ks))(l)
+    l = MaxPooling2D(pool_size=pool_size)(l)
+    #l = Dropout(do2)(l)
+
+    l = Conv2D(nb_filters3, (ks, ks), padding='same',activation=act)(l)
+    #l = Conv2D(nb_filters3, (ks, ks))(l)
+    l = MaxPooling2D(pool_size=pool_size)(l)
+    #l = Dropout(do3)(l)
+
+    l = Flatten()(l)
+    l = Dense(dense1,activation=act)(l)
+    l = Dropout(do4)(l)
+    l = Dense(dense2,activation=act)(l)
+    l =Dropout(do5)(l)
+    
+    o = Dense(nb_classes, activation='softmax')(l)
+
+    model = Model(inputs=i, outputs=o)
+    model.summary()
+    
+    return model
     
     model = Sequential()
     model.add(Convolution2D(nb_filters1, ks, ks,
                             border_mode='same',
                             input_shape=input_shape))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(Convolution2D(nb_filters1, ks, ks))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(MaxPooling2D(pool_size=pool_size))
     model.add(Dropout(do1))
     
     model.add(Convolution2D(nb_filters2, ks, ks, border_mode='same'))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(Convolution2D(nb_filters2, ks, ks))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(MaxPooling2D(pool_size=pool_size))
     model.add(Dropout(do2))
     
     model.add(Convolution2D(nb_filters3, ks, ks, border_mode='same'))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(Convolution2D(nb_filters3, ks, ks))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(MaxPooling2D(pool_size=pool_size))
     model.add(Dropout(do3))
     
     model.add(Flatten())
     model.add(Dense(dense1))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(Dropout(do4))
     model.add(Dense(dense2))
-    model.add(Activation('relu'))
+    model.add(Activation(act))
     model.add(Dropout(do5))
     
     model.add(Dense(nb_classes, activation='softmax'))
