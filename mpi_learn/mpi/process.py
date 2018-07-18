@@ -609,7 +609,7 @@ class MPIMaster(MPIProcess):
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
             num_epochs=1, data=None, algo=None, model_builder=None, 
                  num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None,
-                 threaded_validation=True):
+                 threaded_validation=False):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -817,7 +817,7 @@ class MPIMaster(MPIProcess):
             model = self.validation_model
             self.validation_queue.put((weights, model))
         else:
-            return self.validate_aux(weights, model)
+            return self.validate_aux(weights, self.model)
         
     
     def validate_aux(self, weights, model):
@@ -941,4 +941,4 @@ class MPIMaster(MPIProcess):
         if self.threaded_validation:
             self.validation_model = self.model_builder.build_model()
             self.algo.compile_model( self.validation_model )
-        super(MPIMaster, self).build_model(local_session=True)
+        super(MPIMaster, self).build_model(local_session=self.threaded_validation)
