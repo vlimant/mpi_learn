@@ -132,16 +132,12 @@ class MPIProcess(object):
             self.process_comm.Barrier()
         return self._is_shadow
 
-    def build_model(self):
+    def build_model(self, is_master=True):
         """Builds the Keras model and updates model-related attributes"""
 
         tell_me = self.tell_build
         print("building model",socket.gethostname(),self.ranks)
-        self.model = self.model_builder.build_model()
-
-
-        self.validation_model = self.model_builder.build_model()
-        self.algo.compile_model( self.validation_model )
+        self.model = self.model_builder.build_model(is_master=is_master)
 
         if tell_me: print ("weight pre-compile",socket.gethostname(),self.ranks)
         self.weights = self.model.get_weights()
@@ -499,6 +495,13 @@ class MPIWorker(MPIProcess):
                 num_epochs=num_epochs, data=data, algo=algo, model_builder=model_builder,
                 verbose=verbose, monitor=monitor, custom_objects=custom_objects )
 
+    def build_model(self):
+        """Builds the Keras model and updates model-related attributes"""
+
+        self.validation_model = self.model_builder.build_model()
+        self.algo.compile_model( self.validation_model )
+        super(MPIWorker, self).build_model(is_master=False)
+
     def train(self):
         """Wait for the signal to train. Then train for num_epochs epochs.
             In each step, train on one batch of input data, then send the update to the master
@@ -761,8 +764,11 @@ class MPIMaster(MPIProcess):
         if self.epoch < self.num_epochs or not self.histories.get(self.history_key(),None):
             epoch_logs = self.validate(self.weights)
         if self.threaded_validation:
+            print("waiting for join")
+            self.validation_queue.put(None)
             self.validation_queue.join()
             self.validation_thread.join()
+            print("join done")
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()
@@ -796,9 +802,11 @@ class MPIMaster(MPIProcess):
     def validation_worker(self):
         """Main function of the validation thread"""
         while True:
-            print("Master: Validation thread started")
+            print("Master: Validation thread waiting for work")
             item = self.validation_queue.get()
             if item is None:
+                print ("validation worker thread signing off")
+                self.validation_queue.task_done()
                 break
             weights, model = item
             print("Master: Validation thread got work")
@@ -813,13 +821,10 @@ class MPIMaster(MPIProcess):
 
     def validate(self, weights):
         if self.threaded_validation:
-            #model = self.model.get_copy()
             model = self.validation_model
             print("Added to queue")
             self.validation_queue.put((weights, model))
         else:
-            #model = self.model.get_copy()
-            #self.algo.compile_model(model)
             return self.validate_aux(weights, model)
         
     
@@ -939,3 +944,9 @@ class MPIMaster(MPIProcess):
             comm = self.child_comm
         return comm.isend( None, dest=child, tag=self.lookup_mpi_tag('exit') )
     
+    def build_model(self):
+        """Builds the Keras model and updates model-related attributes"""
+
+        self.validation_model = self.model_builder.build_model()
+        self.algo.compile_model( self.validation_model )
+        super(MPIMaster, self).build_model(is_master=True)
