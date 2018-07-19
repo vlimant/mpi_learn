@@ -685,7 +685,7 @@ class MPIMaster(MPIProcess):
                 ##print ("to validation",self.time_step,self.algo.validate_every,self.time_step % self.algo.validate_every)
                 if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
                     epoch_logs = self.validate()
-                self.epoch += 1
+                    self.epoch += 1
         else:
             self.sync_child(source)
 
