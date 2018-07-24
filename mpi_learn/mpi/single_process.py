@@ -50,6 +50,7 @@ class MPISingleWorker(MPIWorker):
 
         self.monitor = Monitor() if monitor else None
         
+        self.process_comm = None
         self.rank = 0
         self.ranks = "{0}:{1}:{2}".format(0, '-', '-')
         self.build_model()
@@ -59,7 +60,7 @@ class MPISingleWorker(MPIWorker):
         self.check_sanity()
 
         for epoch in range(self.num_epochs):
-            print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, epoch))
+            print ("MPISingle {0} beginning epoch {1:d}".format(self.ranks, epoch))
             if self.monitor:
                 self.monitor.start_monitor()
             epoch_metrics = np.zeros((1,))
