@@ -138,7 +138,10 @@ class MPIManager(object):
         self.model_builder = model_builder
         self.num_masters = num_masters
         self.num_processes = num_processes
-        n_instances,remainder = divmod(comm.Get_size()-self.num_masters, self.num_processes)
+        if comm.Get_size() != 1:
+            n_instances,remainder = divmod(comm.Get_size()-self.num_masters, self.num_processes)
+        else:
+            n_instances,remainder = 1,0
         if remainder:
             print ("The accounting is not correct,",remainder,"nodes are left behind")
         self.num_workers = n_instances # - self.num_masters
@@ -239,28 +242,43 @@ class MPIManager(object):
                 self.parent_rank = None
 
         # Process initialization
-        from .process import MPIWorker, MPIMaster
-        if self.is_master:
+        if comm.Get_size() != 1:
+            from .process import MPIWorker, MPIMaster
+            if self.is_master:
+                self.set_val_data()
+                num_sync_workers = self.get_num_sync_workers(child_comm)
+                self.process = MPIMaster( parent_comm, parent_rank=self.parent_rank, 
+                                        data=self.data, algo=self.algo, model_builder=self.model_builder, 
+                                        child_comm=child_comm, num_epochs=self.num_epochs, 
+                                        num_sync_workers=num_sync_workers,
+                                        verbose=self.verbose, custom_objects=self.custom_objects,
+                                        early_stopping = self.early_stopping, target_metric = self.target_metric
+                )
+            else:
+                self.set_train_data()
+                self.process = MPIWorker( data=self.data, algo=self.algo,
+                                        model_builder=self.model_builder,
+                                        process_comm = self.comm_instance,
+                                        parent_comm=self.comm_block,
+                                        parent_rank=self.parent_rank, 
+                                        num_epochs=self.num_epochs,
+                                        verbose=self.verbose,
+                                        monitor=self.monitor,
+                                        custom_objects=self.custom_objects)
+        else: #Single Process mode
+            from .single_process import MPISingleWorker
             self.set_val_data()
-            num_sync_workers = self.get_num_sync_workers(child_comm)
-            self.process = MPIMaster( parent_comm, parent_rank=self.parent_rank, 
-                                      data=self.data, algo=self.algo, model_builder=self.model_builder, 
-                                      child_comm=child_comm, num_epochs=self.num_epochs, 
-                                      num_sync_workers=num_sync_workers,
-                                      verbose=self.verbose, custom_objects=self.custom_objects,
-                                      early_stopping = self.early_stopping, target_metric = self.target_metric
-            )
-        else:
-            self.set_train_data()
-            self.process = MPIWorker( data=self.data, algo=self.algo,
-                                      model_builder=self.model_builder,
-                                      process_comm = self.comm_instance,
-                                      parent_comm=self.comm_block,
-                                      parent_rank=self.parent_rank, 
-                                      num_epochs=self.num_epochs,
-                                      verbose=self.verbose,
-                                      monitor=self.monitor,
-                                      custom_objects=self.custom_objects)
+            self.set_train_data(use_all=True)
+            self.process = MPISingleWorker(data=self.data, algo=self.algo,
+                                        model_builder=self.model_builder,
+                                        num_epochs=self.num_epochs,
+                                        verbose=self.verbose,
+                                        monitor=self.monitor,
+                                        custom_objects=self.custom_objects,
+                                        early_stopping = self.early_stopping,
+                                        target_metric = self.target_metric
+                                        )
+
 
     def figure_of_merit(self):
         ##if (self.comm_masters and self.comm_masters.Get_rank() == 0) or (self.comm_block.Get_rank() == 0):
@@ -290,11 +308,14 @@ class MPIManager(object):
             return int( math.ceil( 0.95 * (comm.Get_size() - 1) ) )
         return 1
 
-    def set_train_data(self):
+    def set_train_data(self, use_all=False):
         """Sets the training data files to be used by the current process"""
         print ("number of workers",self.num_workers)
         print ("number of files",len(self.train_list))
-        files_for_this_worker = [fn for  (i,fn) in enumerate(self.train_list) if i%self.num_workers==(self.worker_id-1)]
+        if use_all:
+            files_for_this_worker = self.train_list
+        else:
+            files_for_this_worker = [fn for  (i,fn) in enumerate(self.train_list) if i%self.num_workers==(self.worker_id-1)]
 
         print ("Files for worker id{}, rank {}:{}".format(self.worker_id,self.comm_block.Get_rank() if self.comm_block else "N/A",
                                                self.comm_instance.Get_rank() if self.comm_instance else "N/A")
