@@ -91,7 +91,7 @@ class MPISingleWorker(MPIWorker):
 
             self.validate()
 
-        print ("MPIWorker {0} signing off".format(self.ranks))
+        print ("MPISingle {0} signing off".format(self.ranks))
         if self.monitor:
             self.update_monitor( self.monitor.get_stats() )        
 
