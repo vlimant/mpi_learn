@@ -13,48 +13,14 @@ class MPISingleWorker(MPIWorker):
                 verbose, monitor, custom_objects,
                 early_stopping, target_metric):
 
-        self.time_step = 0
         self.has_parent = False
 
         self.best_val_loss = None
         self.target_metric = (target_metric if type(target_metric)==tuple else tuple(map(lambda s : float(s) if s.replace('.','').isdigit() else s, target_metric.split(',')))) if target_metric else None
         self.patience = (early_stopping if type(early_stopping)==tuple else tuple(map(lambda s : float(s) if s.replace('.','').isdigit() else s, early_stopping.split(',')))) if early_stopping else None
 
-        self.num_epochs = num_epochs
-        self.data = data
-        self.algo = algo
-        self.model_builder = model_builder
-        self.verbose = verbose
-        self.histories = {}
-        ev = [
-            #'send',
-            #'receive',
-            #'mpi',
-            #'build',
-            #'bcast'
-            #'loss',
-            #'metrics'
-        ]
-        for extra in ['send','receive','mpi','build','bcast','loss','update','metrics']:
-            attr = 'tell_%s'%extra
-            setattr( self, attr, bool(extra in ev))
-            print (attr, getattr(self, attr))
-                   
-        self.custom_objects = custom_objects
-
-        self.update = None
-        self.stop_training = False
-        self.time_step = 0
-        self._short_batches = 0
-        self._is_shadow = False
-
-        self.monitor = Monitor() if monitor else None
-        
-        self.process_comm = None
-        self.rank = 0
-        self.ranks = "{0}:{1}:{2}".format(0, '-', '-')
-        self.build_model()
-        self.weights = self.model.get_weights()
+        super(MPISingleWorker, self).__init__(data, algo, model_builder, process_comm=None, parent_comm=None, parent_rank=None, 
+            num_epochs=num_epochs, verbose=verbose, monitor=monitor, custom_objects=custom_objects, check_parent=False)
 
     def train(self):
         self.check_sanity()
