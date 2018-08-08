@@ -474,11 +474,9 @@ class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
     def __init__(self, data, algo, model_builder, process_comm, parent_comm, parent_rank=None, 
-            num_epochs=1, verbose=False, monitor=False, custom_objects={}, check_parent=True):
+            num_epochs=1, verbose=False, monitor=False, custom_objects={}):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
-        if check_parent and parent_rank is None:
-            raise Error("MPIWorker initialized without parent rank")
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}"
         tell_comm = parent_comm if parent_comm is not None else process_comm
         if tell_comm: print (info.format(tell_comm.Get_rank(),

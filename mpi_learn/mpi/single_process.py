@@ -20,7 +20,7 @@ class MPISingleWorker(MPIWorker):
         self.patience = (early_stopping if type(early_stopping)==tuple else tuple(map(lambda s : float(s) if s.replace('.','').isdigit() else s, early_stopping.split(',')))) if early_stopping else None
 
         super(MPISingleWorker, self).__init__(data, algo, model_builder, process_comm=None, parent_comm=None, parent_rank=None, 
-            num_epochs=num_epochs, verbose=verbose, monitor=monitor, custom_objects=custom_objects, check_parent=False)
+            num_epochs=num_epochs, verbose=verbose, monitor=monitor, custom_objects=custom_objects)
 
     def train(self):
         self.check_sanity()
