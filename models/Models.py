@@ -1,6 +1,6 @@
 ### Predefined Keras models
 
-import setGPU
+#import setGPU
 import numpy as np
 try:
     from keras.models import Sequential, Model
