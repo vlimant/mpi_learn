@@ -4,10 +4,12 @@ import os,sys,json
 import numpy as np
 import socket
 import time
+import threading, queue
 
 from mpi4py import MPI
 
 from ..train.monitor import Monitor
+from ..train.trace import Trace, trace
 from ..utils import Error, weights_from_shapes, shapes_from_weights
 
 ### Classes ###
@@ -93,6 +95,9 @@ class MPIProcess(object):
             MPI.COMM_WORLD.Get_rank(),
             self.parent_comm.Get_rank() if self.parent_comm is not None else '-',
             self.process_comm.Get_rank() if self.process_comm is not None else '-')
+
+        Trace.set_process_name(type(self).__name__ + " " + self.ranks)
+
         self.build_model()
         if (self.parent_rank is not None and self.parent_comm is not None):
             self.bcast_weights( self.parent_comm )
@@ -127,12 +132,12 @@ class MPIProcess(object):
             self.process_comm.Barrier()
         return self._is_shadow
 
-    def build_model(self):
+    def build_model(self, local_session=True):
         """Builds the Keras model and updates model-related attributes"""
 
         tell_me = self.tell_build
         print("building model",socket.gethostname(),self.ranks)
-        self.model = self.model_builder.build_model()
+        self.model = self.model_builder.build_model(local_session=local_session)
 
         if tell_me: print ("weight pre-compile",socket.gethostname(),self.ranks)
         self.weights = self.model.get_weights()
@@ -180,6 +185,7 @@ class MPIProcess(object):
             return { name:np.asscalar(metric) for name, metric in 
                     zip( self.model.metrics_names(), metrics ) }
 
+    @trace(category="MPI")
     def do_send_sequence(self):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
@@ -487,11 +493,19 @@ class MPIWorker(MPIProcess):
                 num_epochs=num_epochs, data=data, algo=algo, model_builder=model_builder,
                 verbose=verbose, monitor=monitor, custom_objects=custom_objects )
 
+    def build_model(self):
+        """Builds the Keras model and updates model-related attributes"""
+
+        self.validation_model = self.model_builder.build_model()
+        self.algo.compile_model( self.validation_model )
+        super(MPIWorker, self).build_model(local_session=False)
+
     def train(self):
         """Wait for the signal to train. Then train for num_epochs epochs.
             In each step, train on one batch of input data, then send the update to the master
             and wait to receive a new set of weights.  When done, send 'exit' signal to parent.
         """
+        Trace.begin("train")
         self.check_sanity()
 
         self.await_signal_from_parent()
@@ -500,6 +514,7 @@ class MPIWorker(MPIProcess):
         exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
             print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, epoch))
+            Trace.begin("epoch")
             if self.monitor:
                 self.monitor.start_monitor()
             epoch_metrics = np.zeros((1,))
@@ -513,7 +528,9 @@ class MPIWorker(MPIProcess):
                     if self.process_comm.Get_rank()!=0:
                         self.model.set_weights(self.weights)
 
+                Trace.begin("train_on_batch")
                 train_metrics = self.model.train_on_batch( x=batch[0], y=batch[1] )
+                Trace.end("train_on_batch")
                 if epoch_metrics.shape != train_metrics.shape:
                     epoch_metrics = np.zeros( train_metrics.shape)
                 epoch_metrics += train_metrics
@@ -535,17 +552,22 @@ class MPIWorker(MPIProcess):
             epoch_metrics = epoch_metrics / float(i_batch+1)
             l = self.model.get_logs( epoch_metrics )
             self.update_history( l )
+            Trace.end("epoch")
 
             if self.stop_training:
                 break
 
         print ("MPIWorker {0} signing off".format(self.ranks))
+        stats = None
         if self.monitor:
-            self.update_monitor( self.monitor.get_stats() )        
+            stats = self.monitor.get_stats()
+            self.update_monitor( stats )
+        Trace.end("train", monitoring_stats=stats)
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()
 
+    @trace
     def compute_update(self):
         """Compute the update from the new and old sets of model weights"""
         self.update = self.algo.compute_update( self.weights, self.model.get_weights() )
@@ -584,7 +606,8 @@ class MPIMaster(MPIProcess):
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
             num_epochs=1, data=None, algo=None, model_builder=None, 
-                 num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None):
+                 num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None,
+                 threaded_validation=False):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -609,6 +632,8 @@ class MPIMaster(MPIProcess):
                 child_comm.Get_size()))
         if self.num_sync_workers > 1:
             print ("Will wait for updates from {0:d} workers before synchronizing".format(self.num_sync_workers))
+        self.threaded_validation = threaded_validation
+
         super(MPIMaster, self).__init__( parent_comm, process_comm=None,parent_rank=parent_rank, data=data, 
                 algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
                 verbose=verbose, monitor=monitor, custom_objects=custom_objects )
@@ -668,8 +693,8 @@ class MPIMaster(MPIProcess):
             if (self.algo.validate_every > 0 and self.time_step > 0):
                 ##print ("to validation",self.time_step,self.algo.validate_every,self.time_step % self.algo.validate_every)
                 if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
-                    epoch_logs = self.validate()
-                self.epoch += 1
+                    self.validate(self.weights)
+                    self.epoch += 1
         else:
             self.sync_child(source)
 
@@ -709,10 +734,16 @@ class MPIMaster(MPIProcess):
             Receive messages from workers and processes each message until training is done.
             When finished, signal the parent process that training is complete.
         """
+        Trace.begin("train")
         self.start_time = time.time()
         self.check_sanity()
         self.bcast_weights( comm=self.child_comm )
         self.signal_children()
+
+        if self.threaded_validation:
+            self.validation_queue = queue.Queue()
+            self.validation_thread = threading.Thread(target=MPIMaster.validation_worker, args = (self, ))
+            self.validation_thread.start()
 
         status = MPI.Status()
         self.running_workers = list(range(1, self.num_workers+1))
@@ -728,11 +759,17 @@ class MPIMaster(MPIProcess):
         # If we did not finish the last epoch, validate one more time.
         # (this happens if the batch size does not divide the dataset size)
         if self.epoch < self.num_epochs or not self.histories.get(self.history_key(),None):
-            epoch_logs = self.validate()
+            epoch_logs = self.validate(self.weights)
+        if self.threaded_validation:
+            self.validation_queue.put(None)
+            self.validation_queue.join()
+            self.validation_thread.join()
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()
         self.stop_time = time.time()
+        Trace.end("train")
+
 
     def record_details(self, json_name=None, meta=None):
         ## for the uber master, save yourself
@@ -757,24 +794,50 @@ class MPIMaster(MPIProcess):
 
         return self.histories
 
-    def validate(self):
+    def validation_worker(self):
+        """Main function of the validation thread"""
+        print("Validation thread started")
+        while True:
+            item = self.validation_queue.get()
+            if item is None:
+                print ("Validation thread signing off")
+                self.validation_queue.task_done()
+                break
+            weights, model = item
+            try:
+                self.validate_aux(weights, model)
+            except Exception as e:
+                print (e)
+            self.validation_queue.task_done()
+
+    def validate(self, weights):
+        if self.threaded_validation:
+            model = self.validation_model
+            self.validation_queue.put((weights, model))
+        else:
+            return self.validate_aux(weights, self.model)
+        
+    
+    def validate_aux(self, weights, model):
         """Compute the loss on the validation data.
             Return a dictionary of validation metrics."""
+        Trace.begin("validation", "VALIDATION")
         tell = True
         if self.has_parent:
             return {}
-        self.model.set_weights(self.weights)
+        model.set_weights(weights)
+
         if tell: print ("Starting validation")
         val_metrics = np.zeros((1,))
         i_batch = 0
         for i_batch, batch in enumerate(self.data.generate_data()):
-            new_val_metrics =  self.model.test_on_batch(x=batch[0], y =batch[1] )
+            new_val_metrics =  model.test_on_batch(x=batch[0], y =batch[1] )
             if val_metrics.shape != new_val_metrics.shape:
                 val_metrics =  np.zeros(new_val_metrics.shape)
             val_metrics += new_val_metrics
             if self._short_batches and i_batch>self._short_batches: break
         val_metrics = val_metrics / float(i_batch+1)
-        l = self.model.get_logs(val_metrics, val=True)
+        l = model.get_logs(val_metrics, val=True)
         self.update_history( l )
 
         if self.target_metric:
@@ -828,6 +891,7 @@ class MPIMaster(MPIProcess):
         print ("Validation metrics:")
         self.print_metrics(val_metrics)
         if tell: print ("Ending validation")
+        Trace.end("validation", "VALIDATION")
         return None
 
     def apply_update(self):
@@ -869,3 +933,10 @@ class MPIMaster(MPIProcess):
             comm = self.child_comm
         return comm.isend( None, dest=child, tag=self.lookup_mpi_tag('exit') )
     
+    def build_model(self):
+        """Builds the Keras model and updates model-related attributes"""
+
+        if self.threaded_validation:
+            self.validation_model = self.model_builder.build_model()
+            self.algo.compile_model( self.validation_model )
+        super(MPIMaster, self).build_model(local_session=self.threaded_validation)

@@ -4,6 +4,18 @@ from mpi_learn.utils import load_model, get_device_name
 from .optimizer import OptimizerBuilder
 import numpy as np
 import copy
+import sys
+
+def session(f):
+    def wrapper(*args, **kwargs):
+        self_obj = args[0]
+        if hasattr(self_obj, 'session'):
+            with self_obj.graph.as_default():
+                with self_obj.session.as_default():
+                    return f(*args, **kwargs)
+        else:
+            return f(*args, **kwargs)
+    return wrapper
 
 class MPIModel(object):
     """Class that abstract all details of the model
@@ -15,6 +27,7 @@ class MPIModel(object):
         if model and models:
             raise Exception("Cannot specify single and multiple models")
 
+    @session
     def print_metrics(self, metrics):
         if self.model:
             names = self.model.metrics_names
@@ -30,6 +43,7 @@ class MPIModel(object):
                     print ("{0}: {1:.3f}".format(name,metric))
                 print ("")
                 
+    @session
     def get_logs(self, metrics, val=False):
         if self.model:
             if val:
@@ -50,6 +64,7 @@ class MPIModel(object):
                                   zip(m.metrics_names, ametrics ) })
             return logs
         
+    @session
     def update_history(self, items, arg_hist):
         if self.model:
             for m,v in items.items():
@@ -65,6 +80,7 @@ class MPIModel(object):
                     arg_hist.setdefault(m_name,{}).setdefault(m,[]).append(v)
         self.histories = arg_hist
                        
+    @session
     def format_update(self):
         if self.model:
             return [ np.zeros( w.shape, dtype=np.float32 ) for w in self.model.get_weights() ]
@@ -73,7 +89,8 @@ class MPIModel(object):
             for m in self.models:
                 up.append( [ np.zeros( w.shape, dtype=np.float32 ) for w in m.get_weights() ] )
             return up
-            
+    
+    @session
     def get_weights(self):
         if self.model:
             return self.model.get_weights()
@@ -82,7 +99,8 @@ class MPIModel(object):
             for m in self.models:
                 l_weights.append( m.get_weights() )
             return l_weights
-        
+    
+    @session
     def set_weights(self, w ):
         if self.model:
             self.model.set_weights( w )
@@ -103,6 +121,7 @@ class MPIModel(object):
     #        for m in self.models:
     #            m.history = h()
 
+    @session
     def compile(self, **args):
         if 'optimizer' in args and isinstance(args['optimizer'], OptimizerBuilder):
             opt_builder = args['optimizer']
@@ -118,6 +137,7 @@ class MPIModel(object):
                     args['optimizer'] = opt_builder.build()
                 m.compile( **args )
 
+    @session
     def train_on_batch(self, **args):
         if self.model:
             return np.asarray(self.model.train_on_batch( **args ))
@@ -127,6 +147,7 @@ class MPIModel(object):
                 h.append(m.train_on_batch( **args ))
             return np.asarray(h)
                 
+    @session
     def test_on_batch(self, **args):
         if self.model:
             return np.asarray(self.model.test_on_batch( **args ))
@@ -136,6 +157,7 @@ class MPIModel(object):
                 h.append(m.test_on_batch( **args ))
             return np.asarray(h)
 
+    @session
     def figure_of_merit(self, **args):
         ## runs like predict trace, and provides a non differentiable figure of merit for hyper-opt
         ## can of course be the validation loss
@@ -147,6 +169,7 @@ class MPIModel(object):
             return 0.
 
 
+    @session
     def save(self, *args,**kwargs):
         if self.model:
             self.model.save( *args, **kwargs )
@@ -155,6 +178,10 @@ class MPIModel(object):
                 fn = 'm%d_%s'%( im, args[0])
                 print (fn)
                 m.save( fn, **kwargs )
+            
+    def close(self):
+        if hasattr(self, 'session'):
+            self.session.close()
                 
 class MPITModel(MPIModel):
     """
@@ -336,7 +363,7 @@ class ModelFromJson(ModelBuilder):
         self.custom_objects = custom_objects
         super(ModelFromJson, self).__init__(comm)
 
-    def build_model(self):
+    def build_model(self, local_session=True):
         if type(self.filename) == list:
             models = []
             for fn in self.filename:
@@ -383,12 +410,9 @@ class ModelFromJsonTF(ModelBuilder):
             dev_type = 'cpu'
         return get_device_name(dev_type, dev_num, backend='tensorflow')
 
-    def build_model(self):
+    def build_model_aux(self):
         import keras.backend as K
-        K.set_session( K.tf.Session( config=K.tf.ConfigProto(
-            allow_soft_placement=True, log_device_placement=False,
-            gpu_options=K.tf.GPUOptions(
-                per_process_gpu_memory_fraction=1./self.comm.Get_size()) ) ) )
+
         with K.tf.device(self.device):
             if type(self.filename) == list:
                 models = []
@@ -398,8 +422,34 @@ class ModelFromJsonTF(ModelBuilder):
                 return MPIModel(models = models)
             else:
                 model = load_model(filename=self.filename, json_str=self.json_str, 
-                                   custom_objects=self.custom_objects, weights_file=self.weights)
+                                custom_objects=self.custom_objects, weights_file=self.weights)
                 return MPIModel(model = model)
+
+
+    def build_model(self, local_session = True):
+        import keras.backend as K
+
+        if local_session:
+            graph = K.tf.Graph()
+            session = K.tf.Session(graph=graph, config=K.tf.ConfigProto(
+                allow_soft_placement=True, log_device_placement=False,
+                gpu_options=K.tf.GPUOptions(
+                        per_process_gpu_memory_fraction=1./self.comm.Get_size()) ) )
+
+            with graph.as_default():
+                with session.as_default():
+                    import keras.backend as K
+                    ret_model = self.build_model_aux()
+                    ret_model.session = session
+                    ret_model.graph = graph
+                    return ret_model
+        else:
+            K.set_session( K.tf.Session( config=K.tf.ConfigProto(
+                allow_soft_placement=True, log_device_placement=False,
+                gpu_options=K.tf.GPUOptions(
+                    per_process_gpu_memory_fraction=1./self.comm.Get_size()) ) ) )
+            return self.build_model_aux()
+
 
 class ModelPytorch(ModelBuilder):
     def __init__(self, comm, filename=None,
@@ -411,7 +461,7 @@ class ModelPytorch(ModelBuilder):
         self.weights = weights
         self.gpus=gpus
 
-    def build_model(self):
+    def build_model(self, local_session=True):
         import torch
         model = torch.load(self.filename)
         if self.weights:

@@ -14,14 +14,17 @@ from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
 from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF,ModelPytorch
 from mpi_learn.utils import import_keras
+from mpi_learn.train.trace import Trace
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--verbose',help='display metrics for each training batch',action='store_true')
     parser.add_argument('--profile',help='profile theano code',action='store_true')
     parser.add_argument('--monitor',help='Monitor cpu and gpu utilization', action='store_true')
+    parser.add_argument('--trace',help='Record timeline of activity', action='store_true')
     parser.add_argument('--tf', help='use tensorflow backend', action='store_true')
     parser.add_argument('--torch', help='use pytorch', action='store_true')
+    parser.add_argument('--thread_validation', help='run a single process', action='store_true')
     
     # model arguments
     parser.add_argument('model_json', help='JSON file containing model architecture')
@@ -77,6 +80,8 @@ if __name__ == '__main__':
         val_list = [ s.strip() for s in val_list_file.readlines() ]
 
     comm = MPI.COMM_WORLD.Dup()
+
+    if args.trace: Trace.enable()
 
     # Theano is the default backend; use tensorflow if --tf is specified.
     # In the theano case it is necessary to specify the device before importing.
@@ -139,7 +144,7 @@ if __name__ == '__main__':
     # We initialize the Data object with the training data list
     # so that we can use it to count the number of training examples
     data.set_file_names( train_list )
-    validate_every = data.count_data()/args.batch 
+    validate_every = int(data.count_data()/args.batch)
 
     # Some input arguments may be ignored depending on chosen algorithm
     if args.easgd:
@@ -160,7 +165,9 @@ if __name__ == '__main__':
                           synchronous=args.synchronous, 
                           verbose=args.verbose, monitor=args.monitor,
                           early_stopping=args.early_stopping,
-                          target_metric=args.target_metric    )
+                          target_metric=args.target_metric,
+                          thread_validation = args.thread_validation)
+
 
     # Process 0 launches the training procedure
     if comm.Get_rank() == 0:
@@ -176,3 +183,6 @@ if __name__ == '__main__':
         manager.process.record_details(json_name,
                                        meta={"args":vars(args)})            
         print ("Wrote trial information to {0}".format(json_name))
+
+    comm.barrier()
+    if args.trace: Trace.collect(clean=True)
