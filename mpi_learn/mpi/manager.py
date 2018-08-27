@@ -389,8 +389,8 @@ class MPIManager(object):
             print ("holding on",self.process.process_comm.Get_size())
             self.process.process_comm.Barrier()
             import horovod.common as hrv
-            print ("terminating hrv")
-            hrv.terminate()        
+            print ("Shutting down Horovod")
+            hrv.shutdown()
         if self.comm_block is not None:
             self.comm_block.Free()
         if self.comm_masters is not None:
