@@ -483,11 +483,9 @@ class MPIWorker(MPIProcess):
             num_epochs=1, verbose=False, monitor=False, custom_objects={}):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
-        if parent_rank is None:
-            raise Error("MPIWorker initialized without parent rank")
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}"
         tell_comm = parent_comm if parent_comm is not None else process_comm
-        print (info.format(tell_comm.Get_rank(),
+        if tell_comm: print (info.format(tell_comm.Get_rank(),
                            parent_rank,
                            tell_comm.Get_size()))
 
