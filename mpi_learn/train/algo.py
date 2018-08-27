@@ -160,4 +160,4 @@ class Algo(object):
             self.optimizer.save(fn)
 
     def load(self, fn):
-        self.optimizer.load(fn)
+        self.optimizer = self.optimizer.load(fn)

@@ -29,8 +29,9 @@ class Optimizer(object):
 
     def load(self, fn = 'algo_.pkl'):
         d = open(fn, 'rb')
-        self = pickle.load( d )
+        new_self = pickle.load( d )
         d.close()
+        return new_self
 
 
 class MultiOptimizer(Optimizer):
