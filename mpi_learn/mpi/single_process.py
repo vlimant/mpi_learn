@@ -64,8 +64,5 @@ class MPISingleWorker(MPIWorker):
         self.data.finalize()
 
     def validate(self):
-        """Compute the loss on the validation data.
-            Return a dictionary of validation metrics.
-            Shamelessly copied from MPIMaster"""
-        return MPIMaster.validate(self)
+        return MPIMaster.validate_aux(self, self.weights, self.model)
 
