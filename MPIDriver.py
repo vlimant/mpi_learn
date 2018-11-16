@@ -64,12 +64,16 @@ if __name__ == '__main__':
             dest='worker_optimizer', default='sgd')
     parser.add_argument('--sync-every', help='how often to sync weights with master', 
             default=1, type=int, dest='sync_every')
-    parser.add_argument('--easgd',help='use Elastic Averaging SGD',action='store_true')
+    parser.add_argument('--mode',help='Mode of operation.'
+     'One of "sgd" (Stohastic Gradient Descent), "easgd" (Elastic Averaging SGD) or "gem" (Gradient Energy Matching)',default='sgd')
     parser.add_argument('--elastic-force',help='beta parameter for EASGD',type=float,default=0.9)
     parser.add_argument('--elastic-lr',help='worker SGD learning rate for EASGD',
             type=float, default=1.0, dest='elastic_lr')
     parser.add_argument('--elastic-momentum',help='worker SGD momentum for EASGD',
             type=float, default=0, dest='elastic_momentum')
+    parser.add_argument('--gem-lr',help='learning rate for GEM',type=float,default=0.01, dest='gem_lr')
+    parser.add_argument('--gem-momentum',help='momentum for GEM',type=float, default=0.9, dest='gem_momentum')
+    parser.add_argument('--gem-kappa',help='Proxy amplification parameter for GEM',type=float, default=2.0, dest='gem_kappa')
 
     args = parser.parse_args()
     model_name = os.path.basename(args.model_json).replace('.json','')
@@ -147,13 +151,17 @@ if __name__ == '__main__':
     validate_every = int(data.count_data()/args.batch)
 
     # Some input arguments may be ignored depending on chosen algorithm
-    if args.easgd:
+    if args.mode == 'easgd':
         algo = Algo(None, loss=args.loss, validate_every=validate_every,
                 mode='easgd', sync_every=args.sync_every,
                 worker_optimizer=args.worker_optimizer,
                 elastic_force=args.elastic_force/(comm.Get_size()-1),
                 elastic_lr=args.elastic_lr, 
                 elastic_momentum=args.elastic_momentum) 
+    elif args.mode == 'gem':
+        algo = Algo('gem', loss=args.loss, validate_every=validate_every,
+                mode='gem', sync_every=args.sync_every, worker_optimizer=args.worker_optimizer,
+                learning_rate=args.gem_lr, momentum=args.gem_momentum, kappa=args.gem_kappa)
     else:
         algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
