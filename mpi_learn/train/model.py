@@ -329,7 +329,8 @@ class MPITModel(MPIModel):
             
 class ModelBuilder(object):
     """Class containing instructions for building neural net models.
-        Derived classes should implement the build_model function.
+        Derived classes should implement the build_model and get_backend_name
+        functions.
 
         Attributes:
             comm: MPI communicator containing all running MPI processes
@@ -347,6 +348,10 @@ class ModelBuilder(object):
 
     def build_model(self):
         """Should return an uncompiled Keras model."""
+        raise NotImplementedError
+
+    def get_backend_name(self):
+        """Should return the name of backend framework."""
         raise NotImplementedError
 
 class ModelFromJson(ModelBuilder):
@@ -371,6 +376,9 @@ class ModelFromJson(ModelBuilder):
             return MPIModel(models = models)
         else:        
             return MPIModel(model=load_model(filename=self.filename, json_str=self.json_str, custom_objects=self.custom_objects, weights_file=self.weights))
+
+    def get_backend_name(self):
+        return 'keras'
 
 class ModelFromJsonTF(ModelBuilder):
     """ModelBuilder class that builds from model architecture specified
@@ -450,6 +458,8 @@ class ModelFromJsonTF(ModelBuilder):
                     per_process_gpu_memory_fraction=1./self.comm.Get_size()) ) ) )
             return self.build_model_aux()
 
+    def get_backend_name(self):
+        return 'tensorflow'
 
 class ModelPytorch(ModelBuilder):
     def __init__(self, comm, filename=None,
@@ -468,4 +478,7 @@ class ModelPytorch(ModelBuilder):
             wd = torch.load(self.weights)
             model.load_state_dict(wd)
         return MPITModel(model=model, gpus=self.gpus)
+
+    def get_backend_name(self):
+        return 'pytorch'
                                                         

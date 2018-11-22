@@ -83,7 +83,10 @@ class MPIProcess(object):
         self.monitor = Monitor() if monitor else None
 
         if self.process_comm is not None and self.process_comm.Get_size() > 1:
-            import horovod.common as hvd
+            if self.model_builder.get_backend_name() == 'pytorch':
+                import horovod.torch as hvd
+            else:
+                import horovod.keras as hvd
             print ("initializing horovod")
             self.process_comm.Barrier()
             hvd.init(comm=self.process_comm)
