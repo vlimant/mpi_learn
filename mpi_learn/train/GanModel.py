@@ -988,7 +988,7 @@ class GANModelBuilder(ModelBuilder):
         for k,v in args.items():
             self.model_parameters[k] = v
 
-    def build_model(self):
+    def build_model(self, local_session=False):
         m = GANModel(**self.model_parameters)
         if self.weights:
             for mm,w in zip(m.models, self.weights):

@@ -64,13 +64,14 @@ class Data(object):
           batch_size: size of training batches
     """
 
-    def __init__(self, batch_size, cache=None):
+    def __init__(self, batch_size, cache=None, s3=None):
         """Stores the batch size and the names of the data files to be read.
             Params:
               batch_size: batch size for training
         """
         self.batch_size = batch_size
         self.caching_directory = cache if cache else os.environ.get('GANINMEM','')
+        self.use_s3 = s3 if s3 else os.environ.get('USES3','')
         self.fpl = None
 
     def set_caching_directory(self, cache):
@@ -88,11 +89,18 @@ class Data(object):
                 relocate = goes_to+'/'+fn.split('/')[-1]
                 if not os.path.isfile( relocate ):
                     print ("copying %s to %s"%( fn , relocate))
-                    if os.system('cp %s %s'%( fn ,relocate))==0:
-                        relocated.append( relocate )
-                    else:
-                        print ("was enable to copy the file",fn,"to",relocate)
-                        relocated.append( fn ) ## use the initial one
+                    if (self.use_s3):
+                       if os.system('s3cmd get s3://gan-bucket/%s %s'%( fn ,relocate))==0:
+                          relocated.append( relocate )
+                       else:
+                          print ("was enable to copy the file s3://ganbucket/",fn,"to",relocate)
+                          relocated.append( fn ) ## use the initial one
+                    else:   
+                       if os.system('cp %s %s'%( fn ,relocate))==0:
+                          relocated.append( relocate )
+                       else:
+                          print ("was enable to copy the file",fn,"to",relocate)
+                          relocated.append( fn ) ## use the initial one
                 else:
                     relocated.append( relocate )
                         
