@@ -388,9 +388,12 @@ class MPIManager(object):
         if self.process.process_comm is not None:
             print ("holding on",self.process.process_comm.Get_size())
             self.process.process_comm.Barrier()
-            import horovod.common as hrv
+            if self.model_builder.get_backend_name() == 'pytorch':
+                import horovod.torch as hvd
+            else:
+                import horovod.keras as hvd
             print ("Shutting down Horovod")
-            hrv.shutdown()
+            hvd.shutdown()
         if self.comm_block is not None:
             self.comm_block.Free()
         if self.comm_masters is not None:
