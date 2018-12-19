@@ -6,6 +6,8 @@ import sys,os
 import numpy as np
 import argparse
 import json
+import re
+
 from mpi4py import MPI
 from time import time,sleep
 
@@ -25,7 +27,6 @@ if __name__ == '__main__':
 
     # model arguments
     parser.add_argument('model_json', help='JSON file containing model architecture')
-    parser.add_argument('--model_weights', help='Provide the h5 file with weights', default=None)
     parser.add_argument('--trial-name', help='descriptive name for trial', 
             default='train', dest='trial_name')
 
@@ -66,9 +67,8 @@ if __name__ == '__main__':
             type=float, default=1.0, dest='elastic_lr')
     parser.add_argument('--elastic-momentum',help='worker SGD momentum for EASGD',
             type=float, default=0, dest='elastic_momentum')
+    parser.add_argument('--restore', help='pass a file to retore the variables from', default=None)
 
-    parser.add_argument('--load-algo', help='pass a file to load the master algorithm from', default=None, dest='load_algo')
-                        
     args = parser.parse_args()
     model_name = os.path.basename(args.model_json).replace('.json','')
 
@@ -79,6 +79,13 @@ if __name__ == '__main__':
 
     comm = MPI.COMM_WORLD.Dup()
 
+    model_weights = None
+
+    if args.restore:
+        args.restore = re.sub(r'\.algo$', '', args.restore)
+        if not args.tf:
+            model_weights = args.restore + '.model'
+
     # Theano is the default backend; use tensorflow if --tf is specified.
     # In the theano case it is necessary to specify the device before importing.
     device = get_device( comm, args.masters, gpu_limit=args.max_gpus,
@@ -86,6 +93,8 @@ if __name__ == '__main__':
     hide_device = True
     if args.tf: 
         backend = 'tensorflow'
+        if not args.optimizer.endswith("tf"):
+            args.optimizer = args.optimizer + 'tf'
         if hide_device:
             os.environ['CUDA_VISIBLE_DEVICES'] = device[-1] if 'gpu' in device else ''
             print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'],socket.gethostname())
@@ -115,13 +124,13 @@ if __name__ == '__main__':
             ) ) )
 
     if args.tf:
-        #model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=args.model_weights)
+        #model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=model_weights)
         from mpi_learn.train.GanModel import GANModelBuilder
-        model_builder  = GANModelBuilder( comm , device_name=device, tf= True, weights=args.model_weights)
+        model_builder  = GANModelBuilder( comm , device_name=device, tf= True, weights=model_weights)
         print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
     else:
         from mpi_learn.train.GanModel import GANModelBuilder
-        model_builder  = GANModelBuilder( comm , device_name=device, weights=args.model_weights)
+        model_builder  = GANModelBuilder( comm , device_name=device, weights=model_weights)
         print ("Process {0} using device {1}".format(comm.Get_rank(),device))
         os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
         # GPU ops need to be executed synchronously in order for profiling to make sense
@@ -149,8 +158,8 @@ if __name__ == '__main__':
     else:
         algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
                 sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
-    if args.load_algo:
-        algo.load(args.load_algo)
+    if args.restore:
+        algo.load(args.restore)
 
     # Creating the MPIManager object causes all needed worker and master nodes to be created
     manager = MPIManager( comm=comm, data=data, algo=algo, model_builder=model_builder,

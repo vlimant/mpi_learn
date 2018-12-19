@@ -4,6 +4,7 @@ import numpy as np
 import copy
 import pickle
 import os
+import re
 
 from ..utils import weights_from_shapes
 
@@ -28,11 +29,12 @@ class Optimizer(object):
         d.close()
 
     def load(self, fn = 'algo_.pkl'):
+        if not fn.endswith('.algo'):
+            fn = fn + '.algo'
         d = open(fn, 'rb')
         new_self = pickle.load( d )
         d.close()
         return new_self
-
 
 class MultiOptimizer(Optimizer):
     def __init__(self, opt, s):
@@ -51,13 +53,13 @@ class MultiOptimizer(Optimizer):
 class VanillaSGD(Optimizer):
     """Stochastic gradient descent with no extra frills.
           learning_rate: learning rate parameter for SGD"""
-    
+
     def __init__(self, learning_rate=0.01):
         super(VanillaSGD, self).__init__()
         self.learning_rate = learning_rate
 
     def apply_update(self, weights, gradient):
-        """Move weights in the direction of the gradient, by the amount of the 
+        """Move weights in the direction of the gradient, by the amount of the
             learning rate."""
         new_weights = []
         for w, g in zip(weights, gradient):
@@ -68,7 +70,6 @@ class VanillaSGD(Optimizer):
             else:
                 new_weights.append(np.subtract(w, self.learning_rate*g))
         return new_weights
-
 
 class RunningAverageOptimizer(Optimizer):
     """Base class for AdaDelta, Adam, and RMSProp optimizers.
@@ -121,10 +122,9 @@ class RunningAverageOptimizer(Optimizer):
             value: numpy array containing the running average of squares"""
         return np.sqrt( np.add(value, self.epsilon) )
 
-
 class Adam(RunningAverageOptimizer):
     """Adam optimizer.
-        Note that the beta_2 parameter is stored internally as 'rho' 
+        Note that the beta_2 parameter is stored internally as 'rho'
         and "v" in the algorithm is called "running_g2"
         for consistency with the other running-average optimizers
         Attributes:
@@ -226,8 +226,8 @@ class Adam(RunningAverageOptimizer):
                                 print ("d")
                             except:
                                 print ("e")
-                
-                update = 0        
+
+                update = 0
             new_weights.append( w - update )
         return new_weights
 
@@ -287,13 +287,164 @@ class RMSProp(RunningAverageOptimizer):
             new_weights.append( np.subtract( w, update ) )
         return new_weights
 
+class TFOptimizer(Optimizer):
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+        self.sess = None
+        self.saver = None
+        self.load_fn = None
+        self.tf_optimizer = None
+
+        self.reset()
+
+    def reset(self):
+        import tensorflow as tf
+
+        if self.sess:
+            self.sess.close() #free resources from previous execution
+
+        self.sess = tf.Session()
+        self.do_reset = True
+
+    def save(self, fn='train_history'):
+        fn = re.sub(r'\.algo$', '', fn)
+        path = self.saver.save(self.sess, fn)
+        print("Saved state to", path)
+
+    def setup_update(self, weights):
+        import tensorflow as tf
+
+        """Setup the tf computational graph. Should be run once for each model
+            Receives the weights in order to know the shapes to use
+        """
+        self.gradient = [ tf.placeholder(dtype=tf.float32, shape=w.shape, name="gradient") for w in weights ]
+        self.weights = [ tf.Variable(w, dtype=tf.float32, name="weights_{}".format(i)) for i, w in enumerate(weights) ]
+
+        var_list = zip(self.gradient, self.weights)
+
+        self.tf_time = tf.Variable(1, dtype=tf.float32, name="time")
+
+        self.optimizer_op = self.tf_optimizer.apply_gradients(
+            grads_and_vars=var_list,
+            global_step=self.tf_time,
+            name='optimizer_op' # We may need to create uniqie name
+        )
+
+        self.saver = tf.train.Saver(max_to_keep=1)
+
+        if self.load_fn:
+            self.saver.restore(self.sess, self.load_fn)
+        else:
+            self.sess.run(tf.global_variables_initializer())
+
+    def load(self, fn='train_history'):
+        self.load_fn = re.sub(r'\.algo$', '', fn)
+        self.do_reset = True
+
+        return self
+
+    def apply_update(self, weights, gradient):
+        if self.do_reset:
+            self.setup_update(weights)
+            self.do_reset = False
+
+        gradient_dict = {placeholder : value for placeholder, value in zip(self.gradient, gradient)}
+
+        #Trace.begin("tf_optimizer")
+        self.sess.run(self.optimizer_op, feed_dict=gradient_dict)
+        #Trace.end("tf_optimizer")
+
+        #Trace.begin("tf_get_weights")
+        res = self.sess.run(self.weights)
+        #Trace.end("tf_get_weights")
+
+        return res
+
+class GradientDescentTF(TFOptimizer):
+    def __init__(self, learning_rate=0.01):
+        super(GradientDescentTF, self).__init__(learning_rate=learning_rate)
+
+    def setup_update(self, weights):
+        import tensorflow as tf
+
+        self.tf_optimizer = tf.train.GradientDescentOptimizer(
+            learning_rate=self.learning_rate,
+            use_locking=False,
+            name='SGDMaster' # We may need to create uniqie name
+        )
+
+        super(GradientDescentTF, self).setup_update(weights)
+
+class AdaDeltaTF(TFOptimizer):
+    def __init__(self, learning_rate=0.001, rho=0.95, epsilon=1e-8):
+        super(AdaDeltaTF, self).__init__(learning_rate=learning_rate, rho=rho, epsilon=epsilon)
+
+    def setup_update(self, weights):
+        import tensorflow as tf
+
+        self.tf_optimizer = tf.train.AdadeltaOptimizer(
+            learning_rate=self.learning_rate,
+            rho=self.rho,
+            epsilon=self.epsilon,
+            use_locking=False,
+            name='AdaDeltaMaster' # We may need to create uniqie name
+        )
+
+        super(AdaDeltaTF, self).setup_update(weights)
+
+class RMSPropTF(TFOptimizer):
+    def __init__(self, learning_rate=0.001, decay=0.9, momentum=0.0, epsilon=1e-10):
+        super(RMSPropTF, self).__init__(learning_rate=learning_rate, decay=decay,
+            momentum=momentum, epsilon=epsilon)
+
+    def setup_update(self, weights):
+        import tensorflow as tf
+
+        self.tf_optimizer = tf.train.RMSPropOptimizer(
+            learning_rate=self.learning_rate,
+            decay=self.decay,
+            momentum=self.momentum,
+            epsilon=self.epsilon,
+            use_locking=False,
+            name='RMSPropMaster' # We may need to create uniqie name
+        )
+
+        super(RMSPropTF, self).setup_update(weights)
+
+class AdamTF(TFOptimizer):
+    def __init__(self, learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-8):
+        super(AdamTF, self).__init__(learning_rate=learning_rate,
+            beta_1=beta_1, beta_2=beta_2, epsilon=epsilon)
+
+    def setup_update(self, weights):
+        import tensorflow as tf
+
+        self.tf_optimizer = tf.train.AdamOptimizer(
+            learning_rate=self.learning_rate,
+            beta1=self.beta_1,
+            beta2=self.beta_2,
+            epsilon=self.epsilon,
+            use_locking=False,
+            name='AdamMaster' # We may need to create uniqie name
+        )
+
+        super(AdamTF, self).setup_update(weights)
+
 def get_optimizer(name):
     """Get optimizer class by string identifier"""
     lookup = {
-            'sgd':      VanillaSGD,
-            'adadelta': AdaDelta,
-            'rmsprop':  RMSProp,
-            'adam':     Adam,
+            # Native optimizers
+            'sgd':        VanillaSGD,
+            'adadelta':   AdaDelta,
+            'rmsprop':    RMSProp,
+            'adam':       Adam,
+            # Wrappers around TF's optimizers
+            'sgdtf':      GradientDescentTF,
+            'adadeltatf': AdaDeltaTF,
+            'rmsproptf':  RMSPropTF,
+            'adamtf':     AdamTF,
             }
     return lookup[name]
 
