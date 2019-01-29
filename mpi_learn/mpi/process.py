@@ -206,6 +206,24 @@ class MPIProcess(object):
         if tell: print ("weights received")
         self.algo.set_worker_model_weights( self.model, self.weights )
         if tell: print ("end send sequence")
+
+    def apply_update(self):
+        """Updates weights according to update received from worker process"""
+        if self.tell_update:
+            print ("rank",self.ranks,"applying weights")
+            print (self.ranks,"weights",np.ravel(self.weights[0][0])[:10])
+            print (self.ranks,"weights",np.ravel(self.weights[1][0])[:10])
+            print (self.ranks,"update",np.ravel(self.update[0][0])[:10])
+            print (self.ranks,"update",np.ravel(self.update[1][0])[:10])
+        with np.errstate( divide='raise',
+                          invalid='raise',
+                          over='raise',
+                          #under ='raise'## might not be too bad
+                      ):
+            self.weights = self.algo.apply_update( self.weights, self.update )
+        if self.tell_update:
+            print (self.ranks,"new weights",np.ravel(self.weights[0][0])[:10])
+            print (self.ranks,"new weights",np.ravel(self.weights[1][0])[:10])
         
     ### MPI-related functions below ###
 
@@ -221,6 +239,8 @@ class MPIProcess(object):
             'history':        6,
             'weights':        12,
             'update':         12,
+            'begin_gem':      13,
+            'update_gem':     14,
             }
     # This dict is for reverse tag lookups.
     inv_tag_lookup = { value:key for key,value in tag_lookup.items() }
@@ -503,6 +523,31 @@ class MPIWorker(MPIProcess):
         self.algo.compile_model( self.validation_model )
         super(MPIWorker, self).build_model(local_session=False)
 
+    def sync_with_parent(self):
+        self.compute_update()
+        if self.algo.mode == 'gem':
+            self.do_gem_sequence()
+        else:
+            self.do_send_sequence()
+
+    def notify_parent(self):
+        """Notify parent that worker is ready to begin GEM sequence."""
+        self.send( None, 'begin_gem' )
+
+    def do_gem_sequence(self):
+        """GEM sequence on worker:
+         -Notify parent we are ready
+         -Receive central variable (weights) from master
+         -Compute the update with GEM
+         -Send the update to master and apply it to own weights
+        """
+        self.notify_parent()
+        self.recv_weights()
+        self.update = self.algo.compute_update_worker(self.weights, self.update)
+        self.send_update()
+        self.apply_update()
+        self.algo.set_worker_model_weights(self.model, self.weights)
+
     def train(self):
         """Wait for the signal to train. Then train for num_epochs epochs.
             In each step, train on one batch of input data, then send the update to the master
@@ -538,8 +583,7 @@ class MPIWorker(MPIProcess):
                     epoch_metrics = np.zeros( train_metrics.shape)
                 epoch_metrics += train_metrics
                 if self.algo.should_sync():
-                    self.compute_update()
-                    self.do_send_sequence()
+                    self.sync_with_parent()
                 if exit_request and exit_request.Test():
                     self.stop_training = True
                     if self.process_comm:
@@ -701,6 +745,23 @@ class MPIMaster(MPIProcess):
         else:
             self.sync_child(source)
 
+    def do_gem_sequence(self, source):
+        """Gradient enery matching procedure:
+         -Send the current central variable (weights) to worker.
+         -Wait to receive the update and apply it.
+         -Finally we run validation if we have completed one epoch's worth of updates."""
+        self.send_weights( dest=source, comm=self.child_comm )
+
+    def do_gem_update_sequence(self, source):
+        self.recv_update( source=source, comm=self.child_comm )
+        self.apply_update()
+        #Update model weights and signal all waiting workers to work again.
+        self.time_step += 1
+        if (self.algo.validate_every > 0 and self.time_step > 0):
+            if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
+                self.validate(self.weights)
+                self.epoch += 1
+
     def do_worker_finish_sequence(self, worker_id):
         """Actions to take when a worker finishes training and returns its history"""
         self.histories.update( self.recv_history_from_child(worker_id) )
@@ -714,12 +775,18 @@ class MPIMaster(MPIProcess):
             Returns the tag of the message received.
             Possible messages are:
             -begin_update: worker is ready to send a new update
+            -begin_gem: Worker needs central variable to start GEM
             -exit: worker is done training and will shut down
         """
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
         if tag == 'begin_update':
-            self.do_update_sequence(source)
+            if self.algo.mode == 'gem':
+                self.do_gem_update_sequence(source)
+            else:
+                self.do_update_sequence(source)
+        elif tag == 'begin_gem':
+            self.do_gem_sequence(source)
         elif tag == 'exit':
             self.do_worker_finish_sequence(source)
         else:
@@ -897,24 +964,6 @@ class MPIMaster(MPIProcess):
         Trace.end("validation", "VALIDATION")
         return None
 
-    def apply_update(self):
-        """Updates weights according to update received from worker process"""
-        if self.tell_update:
-            print ("rank",self.ranks,"applying weights")
-            print (self.ranks,"weights",np.ravel(self.weights[0][0])[:10])
-            print (self.ranks,"weights",np.ravel(self.weights[1][0])[:10])
-            print (self.ranks,"update",np.ravel(self.update[0][0])[:10])
-            print (self.ranks,"update",np.ravel(self.update[1][0])[:10])
-        with np.errstate( divide='raise', 
-                          invalid='raise', 
-                          over='raise',
-                          #under ='raise'## might not be too bad
-                      ):
-            self.weights = self.algo.apply_update( self.weights, self.update )
-        if self.tell_update:
-            print (self.ranks,"new weights",np.ravel(self.weights[0][0])[:10])
-            print (self.ranks,"new weights",np.ravel(self.weights[1][0])[:10])
-        
     ### MPI-related functions below
 
     def signal_children(self):
