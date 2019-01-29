@@ -33,6 +33,8 @@ import socket
 host = os.environ.get('HOST', os.environ.get('HOSTNAME',socket.gethostname()))
 if 'daint' in host:
     dest='/scratch/snx3000/vlimant/3DGAN/'
+if 'titan' in host:
+    dest='/ccs/proj/csc291/DATA/3DGAN/'
 
 sub_split = int(sys.argv[1]) if len(sys.argv)>1 else 1
                                           
@@ -73,13 +75,17 @@ for F in glob.glob('/bigdata/shared/LCD/NewV1/*scan/*.h5'):
             o.close()
             X = None
 
+if sub_split == 1:
+    sub_files = lambda f:not 'sub' in f
+else:
+    sub_files = lambda f:'sub' in f
 
-open('train_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:-4])))
-open('test_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-4:])))
+open('train_3d.list','w').write( '\n'.join(filter(sub_files,glob.glob(dest+'/*.h5')[:-4])))
+open('test_3d.list','w').write( '\n'.join(filter(sub_files,glob.glob(dest+'/*.h5')[-4:])))
 
-open('train_small_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:-4])))
-open('test_small_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-4:])))
+open('train_small_3d.list','w').write( '\n'.join(filter(sub_files,glob.glob(dest+'/*.h5')[:-4])))
+open('test_small_3d.list','w').write( '\n'.join(filter(sub_files,glob.glob(dest+'/*.h5')[-4:])))
 
-open('train_7_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[:7])))
-open('test_1_3d.list','w').write( '\n'.join(filter(lambda f:not 'sub' in f,glob.glob(dest+'/*.h5')[-1:])))
+open('train_7_3d.list','w').write( '\n'.join(filter(sub_files,glob.glob(dest+'/*.h5')[:7])))
+open('test_1_3d.list','w').write( '\n'.join(filter(sub_files,glob.glob(dest+'/*.h5')[-1:])))
     
