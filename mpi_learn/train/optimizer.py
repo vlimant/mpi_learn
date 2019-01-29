@@ -287,6 +287,82 @@ class RMSProp(RunningAverageOptimizer):
             new_weights.append( np.subtract( w, update ) )
         return new_weights
 
+class GEM(Optimizer):
+    """GEM optimizer
+        learning_rate: base learning rate, kept constant
+        momentum: momentum term, constant
+        kappa: Proxy amplification. Experimental results show 2 is a good value.
+        """
+
+    def __init__(self, learning_rate=0.01, momentum=0.9, kappa=1.0):
+        super(GEM, self).__init__()
+        self.learning_rate = learning_rate
+        self.momentum = momentum
+        self.kappa = kappa
+        self.epsilon = 10e-13
+
+        self.central_variable_moment = None
+        self.stale = None
+        self.moment = None
+
+        self.tensors_initialized = False
+
+    def init_tensors(self, weights):
+        if not self.tensors_initialized:
+            self.central_variable_moment = [ np.zeros_like(w) for w in weights ]
+            self.stale = [ np.zeros_like(w) for w in weights ]
+            self.moment = [ np.zeros_like(w) for w in weights ]
+
+            self.tensors_initialized = True
+
+    def begin_compute_update(self, cur_weights, new_weights):
+        self.init_tensors(cur_weights)
+
+        update = []
+
+        for idx, (cur_w, new_w) in enumerate(zip(cur_weights, new_weights)):
+            update.append( np.subtract( cur_w, new_w ))
+            update[idx] *= -self.learning_rate
+            # Update the states with the current gradient.
+            self.moment[idx] *= self.momentum
+            self.moment[idx] += update[idx]
+
+        return update
+
+    def gradient_energy_matching(self, gradient):
+        Pi = [] # Pi tensors for all parameters.
+
+        for idx, g in enumerate(gradient):
+            proxy = self.kappa * np.abs(self.moment[idx])
+            central_variable = np.abs(self.central_variable_moment[idx])
+            update = np.abs(g + self.epsilon)
+            pi = (proxy - central_variable) / update
+            np.clip(pi, 0., 5., out=pi) # For numerical stability.
+            Pi.append(pi)
+
+        return Pi
+
+    def compute_update(self, weights, gradient):
+        for idx, w in enumerate(weights):
+            self.central_variable_moment[idx] = (w - self.stale[idx])
+            self.stale[idx] = np.copy(w)
+
+        update = []
+
+        pi = self.gradient_energy_matching(gradient)
+        # Apply the scalars to the update.
+        for idx, g in enumerate(gradient):
+            update.append(np.multiply(g, pi[idx]))
+
+        return update
+
+    def apply_update(self, weights, update):
+        """Add the update to the weights."""
+        new_weights = []
+        for w, u in zip(weights, update):
+            new_weights.append(np.add(w, u))
+        return new_weights
+
 def get_optimizer(name):
     """Get optimizer class by string identifier"""
     lookup = {
@@ -294,6 +370,7 @@ def get_optimizer(name):
             'adadelta': AdaDelta,
             'rmsprop':  RMSProp,
             'adam':     Adam,
+            'gem':      GEM,
             }
     return lookup[name]
 

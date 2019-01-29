@@ -35,7 +35,7 @@ class Algo(object):
                loss: string naming the loss function to be used for training
                validate_every: number of time steps to wait between validations
                sync_every: number of time steps to wait before getting weights from parent
-               mode: 'sgd' or 'easgd' are supported
+               mode: 'sgd', 'easgd' or 'gem' are supported
                worker_optimizer: string indicating which optimizer the worker should use.
                     (note that if worker_optimizer is sgd and worker_lr is 1, the worker's
                      updates will be the gradients computed at each time step, which is 
@@ -72,7 +72,9 @@ class Algo(object):
                 self.worker_optimizer_builder.config = {'lr':self.elastic_lr}
 
         self.step_counter = 0
-        if self.mode == 'easgd':
+        if self.mode == 'gem':
+            self.worker_update_type = 'gem'
+        elif self.mode == 'easgd':
             self.worker_update_type = 'weights'
             self.send_before_apply = True
         else:
@@ -97,7 +99,9 @@ class Algo(object):
 
     def compute_update(self, cur_weights, new_weights):
         """Computes the update to be sent to the parent process"""
-        if self.worker_update_type == 'weights':
+        if self.worker_update_type == 'gem':
+            return self.optimizer.begin_compute_update(cur_weights, new_weights)
+        elif self.worker_update_type == 'weights':
             return new_weights
         else:
             update = []
@@ -111,6 +115,11 @@ class Algo(object):
                 else:
                     update.append( np.subtract( cur_w, new_w ) )
             return update
+
+    def compute_update_worker(self, weights, update):
+        """Compute the update on worker (for GEM)"""
+        if self.mode == 'gem': # Only possible in GEM mode
+            return self.optimizer.compute_update(weights, update)
 
     def set_worker_model_weights(self, model, weights):
         """Apply a new set of weights to the worker's copy of the model"""
