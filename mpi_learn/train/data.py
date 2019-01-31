@@ -2,6 +2,46 @@
 
 import numpy as np
 import h5py
+import os
+import time
+from threading import Thread
+import itertools
+
+class FilePreloader(Thread):
+    def __init__(self, files_list, file_open,n_ahead=2):
+        Thread.__init__(self)
+        self.deamon = True
+        self.n_concurrent = n_ahead
+        self.files_list = files_list
+        self.file_open = file_open
+        self.loaded = {} ## a dict of the loaded objects
+        self.should_stop = False
+        
+    def getFile(self, name):
+        ## locks until the file is loaded, then return the handle
+        return self.loaded.setdefault(name, self.file_open( name))
+
+    def closeFile(self,name):
+        ## close the file and
+        if name in self.loaded:
+            self.loaded.pop(name).close()
+    
+    def run(self):
+        while not self.files_list:
+            time.sleep(1)
+        for name in itertools.cycle(self.files_list):
+            if self.should_stop:
+                break
+            n_there = len(self.loaded.keys())
+            if n_there< self.n_concurrent:
+                print ("preloading",name,"with",n_there)
+                self.getFile( name )
+            else:
+                time.sleep(5)
+
+    def stop(self):
+        print("Stopping FilePreloader")
+        self.should_stop = True
 
 def data_class_getter(name):
     """Returns the specified Data class"""
@@ -24,16 +64,61 @@ class Data(object):
           batch_size: size of training batches
     """
 
-    def __init__(self, batch_size):
+    def __init__(self, batch_size, cache=None, s3=None):
         """Stores the batch size and the names of the data files to be read.
             Params:
               batch_size: batch size for training
         """
         self.batch_size = batch_size
+        self.caching_directory = cache if cache else os.environ.get('GANINMEM','')
+        self.use_s3 = s3 if s3 else os.environ.get('USES3','')
+        self.fpl = None
 
+    def set_caching_directory(self, cache):
+        self.caching_directory = cache
+        
     def set_file_names(self, file_names):
-        self.file_names = file_names
+        ## hook to copy data in /dev/shm
+        relocated = []
+        if self.caching_directory:
+            goes_to = self.caching_directory
+            goes_to += str(os.getpid())
+            os.system('mkdir %s '%goes_to)
+            os.system('rm %s/* -f'%goes_to) ## clean first if anything
+            for fn in file_names:
+                relocate = goes_to+'/'+fn.split('/')[-1]
+                if not os.path.isfile( relocate ):
+                    print ("copying %s to %s"%( fn , relocate))
+                    if (self.use_s3):
+                       if os.system('s3cmd get s3://gan-bucket/%s %s'%( fn ,relocate))==0:
+                          relocated.append( relocate )
+                       else:
+                          print ("was enable to copy the file s3://ganbucket/",fn,"to",relocate)
+                          relocated.append( fn ) ## use the initial one
+                    else:   
+                       if os.system('cp %s %s'%( fn ,relocate))==0:
+                          relocated.append( relocate )
+                       else:
+                          print ("was enable to copy the file",fn,"to",relocate)
+                          relocated.append( fn ) ## use the initial one
+                else:
+                    relocated.append( relocate )
+                        
+            self.file_names = relocated
+        else:
+            self.file_names = file_names
             
+        if self.fpl:
+            self.fpl.files_list = self.file_names
+
+    def inf_generate_data(self):
+        while True:
+            try:
+                for B in self.generate_data():
+                    yield B
+            except StopIteration as si:
+                print ("start over generator loop")
+                
     def generate_data(self):
        """Yields batches of training data until none are left."""
        leftovers = None
@@ -105,22 +190,35 @@ class H5Data(Data):
           features_name, labels_name: names of the datasets containing the features
           and labels, respectively
     """
-
-    def __init__(self, batch_size, 
-            features_name='features', labels_name='labels'):
+    def __init__(self, batch_size,
+                 cache=None,
+                 preloading=0,
+                 features_name='features', labels_name='labels'):
         """Initializes and stores names of feature and label datasets"""
-        super(H5Data, self).__init__(batch_size)
+        super(H5Data, self).__init__(batch_size,cache)
         self.features_name = features_name
         self.labels_name = labels_name
+        ## initialize the data-preloader
+        self.fpl = None
+        if preloading:
+            self.fpl = FilePreloader( [] , file_open = lambda n : h5py.File(n,'r'), n_ahead=preloading)
+            self.fpl.start()          
+       
 
     def load_data(self, in_file_name):
         """Loads numpy arrays from H5 file.
             If the features/labels groups contain more than one dataset,
             we load them all, alphabetically by key."""
-        h5_file = h5py.File( in_file_name, 'r' )
+        if self.fpl:
+            h5_file = self.fpl.getFile( in_file_name )
+        else:
+            h5_file = h5py.File( in_file_name, 'r' )
         X = self.load_hdf5_data( h5_file[self.features_name] )
         Y = self.load_hdf5_data( h5_file[self.labels_name] )
-        h5_file.close()
+        if self.fpl:
+            self.fpl.closeFile( in_file_name )
+        else:
+            h5_file.close()
         return X,Y 
 
     def load_hdf5_data(self, data):
@@ -147,3 +245,7 @@ class H5Data(Data):
                 num_data += len(X)
             h5_file.close()
         return num_data
+
+    def finalize(self):
+        if self.fpl:
+            self.fpl.stop()

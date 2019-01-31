@@ -43,6 +43,7 @@ def import_keras(tries=10):
             return
         except ValueError:
             print ("Unable to import keras. Trying again: {0:d}".format(try_num))
+            from time import sleep
             sleep(0.1)
     print ("Failed to import keras!")
 

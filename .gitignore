@@ -3,3 +3,4 @@
 *.json
 *.h5
 *.txt
+.DS_Store

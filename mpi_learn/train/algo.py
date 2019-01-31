@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from .optimizer import get_optimizer
+from .optimizer import get_optimizer, MultiOptimizer, OptimizerBuilder
 
 class Algo(object):
     """The Algo class contains all information about the training algorithm.
@@ -35,7 +35,7 @@ class Algo(object):
                loss: string naming the loss function to be used for training
                validate_every: number of time steps to wait between validations
                sync_every: number of time steps to wait before getting weights from parent
-               mode: 'sgd' or 'easgd' are supported
+               mode: 'sgd', 'easgd' or 'gem' are supported
                worker_optimizer: string indicating which optimizer the worker should use.
                     (note that if worker_optimizer is sgd and worker_lr is 1, the worker's
                      updates will be the gradients computed at each time step, which is 
@@ -50,22 +50,41 @@ class Algo(object):
                 setattr(self, opt, kwargs[opt])
             else:
                 setattr(self, opt, self.supported_opts[opt])
+            print ("algo",opt,getattr(self,opt))
 
         self.optimizer_name = optimizer
         if optimizer is not None:
             optimizer_args = { arg:val for arg,val in kwargs.items() 
                 if arg not in self.supported_opts }
+            print ("creating optimizer",optimizer)
             self.optimizer = get_optimizer( optimizer )(**optimizer_args)
         else:
             self.optimizer = None
 
+        """Workers are only responsible for computing the gradient and 
+            sending it to the master, so we use ordinary SGD with learning rate 1 and 
+            compute the gradient as (old weights - new weights) after each batch."""
+        self.worker_optimizer_builder = OptimizerBuilder(self.worker_optimizer)
+        if self.worker_optimizer == 'sgd':
+            if self.elastic_momentum > 0:
+                self.worker_optimizer_builder.config = {'lr':self.elastic_lr, 'momentum':self.elastic_momentum, 'nesterov':True}
+            else:
+                self.worker_optimizer_builder.config = {'lr':self.elastic_lr}
+
         self.step_counter = 0
-        if self.mode == 'easgd':
+        if self.mode == 'gem':
+            self.worker_update_type = 'gem'
+        elif self.mode == 'easgd':
             self.worker_update_type = 'weights'
             self.send_before_apply = True
         else:
             self.worker_update_type = 'update'
             self.send_before_apply = False
+
+    def reset(self):
+        ## reset any caching running values
+        if self.optimizer:
+            self.optimizer.reset()
 
     def __str__(self):
         strs = [ "optimizer: "+str(self.optimizer_name) ]
@@ -75,28 +94,32 @@ class Algo(object):
     ### For Worker ###
 
     def compile_model(self, model):
-        """Compile the model. Workers are only responsible for computing the gradient and 
-            sending it to the master, so we use ordinary SGD with learning rate 1 and 
-            compute the gradient as (old weights - new weights) after each batch"""
-        if self.worker_optimizer == 'sgd':
-            from keras.optimizers import SGD
-            if self.elastic_momentum > 0:
-                optimizer = SGD(lr=self.elastic_lr, momentum=self.elastic_momentum, nesterov=True)
-            else:
-                optimizer = SGD(lr=self.elastic_lr)
-        else:
-            optimizer = self.worker_optimizer 
-        model.compile( loss=self.loss, optimizer=optimizer, metrics=['accuracy'] )
+        """Compile the model."""
+        model.compile( loss=self.loss, optimizer=self.worker_optimizer_builder, metrics=['accuracy'] )
 
     def compute_update(self, cur_weights, new_weights):
         """Computes the update to be sent to the parent process"""
-        if self.worker_update_type == 'weights':
+        if self.worker_update_type == 'gem':
+            return self.optimizer.begin_compute_update(cur_weights, new_weights)
+        elif self.worker_update_type == 'weights':
             return new_weights
         else:
             update = []
             for cur_w, new_w in zip( cur_weights, new_weights ):
-                update.append( np.subtract( cur_w, new_w ) )
+                #print ("compute_update",type(cur_w))
+                if type(cur_w) == list:
+                    ## polymorph case
+                    update.append([])
+                    for sub_c_w,sub_n_w in zip(cur_w, new_w):
+                        update[-1].append( np.subtract( sub_c_w,sub_n_w) )
+                else:
+                    update.append( np.subtract( cur_w, new_w ) )
             return update
+
+    def compute_update_worker(self, weights, update):
+        """Compute the update on worker (for GEM)"""
+        if self.mode == 'gem': # Only possible in GEM mode
+            return self.optimizer.compute_update(weights, update)
 
     def set_worker_model_weights(self, model, weights):
         """Apply a new set of weights to the worker's copy of the model"""
@@ -109,9 +132,15 @@ class Algo(object):
     def get_elastic_update(self, cur_weights, other_weights):
         """EASGD weights update"""
         new_weights = []
-        for cur_w,other_w in zip( cur_weights, other_weights ):
-            new_w = cur_w - self.elastic_force * np.subtract( cur_w, other_w )
-            new_weights.append( new_w )
+        for m_w,om_w in zip( cur_weights, other_weights ):
+            if type( m_w ) == list:
+                new_weights.append( [] )
+                for cur_w,other_w in zip( m_w, om_w ):
+                    new_w = cur_w - self.elastic_force * np.subtract( cur_w, other_w )
+                    new_weights[-1].append( new_w )
+            else:
+                new_w = m_w - self.elastic_force * np.subtract( m_w, om_w )
+                new_weights.append( new_w )
         return new_weights
 
     def should_sync(self):
@@ -124,8 +153,20 @@ class Algo(object):
     def apply_update(self, weights, update):
         """Calls the optimizer to apply an update
             and returns the resulting weights"""
+        #print ("apply_update",self.mode)
         if self.mode == 'easgd':
             return self.get_elastic_update( weights, update )
         else:
+            if type(weights[0]) == list:
+                if type(self.optimizer)!= MultiOptimizer:
+                    print ("initializing MultiOptimizer from", self.optimizer)
+                    self.optimizer = MultiOptimizer( self.optimizer, len(weights))
             new_weights = self.optimizer.apply_update( weights, update )
             return new_weights
+        
+    def save(self, fn=None):
+        if self.optimizer:
+            self.optimizer.save(fn)
+
+    def load(self, fn):
+        self.optimizer = self.optimizer.load(fn)

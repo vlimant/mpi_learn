@@ -1,9 +1,15 @@
 ### MPIWorker and MPIMaster classes 
 
-import os,sys
+import os,sys,json
 import numpy as np
+import socket
+import time
+import threading, queue
+
 from mpi4py import MPI
 
+from ..train.monitor import Monitor
+from ..train.trace import Trace, trace
 from ..utils import Error, weights_from_shapes, shapes_from_weights
 
 ### Classes ###
@@ -25,14 +31,11 @@ class MPIProcess(object):
            data: Data object used to generate training or validation data
            time_step: for keeping track of time
            num_epochs: integer giving the number of epochs to train for
-           callbacks_list: list of keras callbacks
-           callbacks: keras CallbackList object holding the designated callbacks
-           callback_model: model used for callbacks
            stop_training: becomes true when it is time to stop training
     """
 
-    def __init__(self, parent_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
-            model_builder=None, callbacks=[], verbose=False, custom_objects={}):
+    def __init__(self, parent_comm, process_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
+            model_builder=None, verbose=False, monitor=False, custom_objects={}):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, training should be launched with train().
             
@@ -43,65 +46,119 @@ class MPIProcess(object):
               data: Data object used to generate training or validation data
               algo: Algo object used to configure the training process
               model_builder: ModelBuilder object specifying model
-              callbacks: list of keras callbacks
               verbose: whether to print verbose output
+              monitor: whether to monitor CPU/GPU usage
         """
-        self.parent_comm = parent_comm 
+        self.parent_comm = parent_comm
+        self.process_comm = process_comm
         self.parent_rank = parent_rank
         self.num_epochs = num_epochs
         self.data = data
         self.algo = algo
         self.model_builder = model_builder
-        self.callbacks_list = callbacks
         self.verbose = verbose
+        self.histories = {}
+        ev = [
+            #'send',
+            #'receive',
+            #'mpi',
+            #'build',
+            #'bcast'
+            #'loss',
+            #'metrics'
+        ]
+        for extra in ['send','receive','mpi','build','bcast','loss','update','metrics']:
+            attr = 'tell_%s'%extra
+            setattr( self, attr, bool(extra in ev))
+            print (attr, getattr(self, attr))
+                   
         self.custom_objects = custom_objects
 
         self.update = None
         self.stop_training = False
         self.time_step = 0
+        self._short_batches = 0
+        self._is_shadow = (self.process_comm is not None and self.process_comm.Get_rank()!=0)
 
-        self.rank = parent_comm.Get_rank()
+        self.monitor = Monitor() if monitor else None
+
+        if self.process_comm is not None and self.process_comm.Get_size() > 1:
+            if self.model_builder.get_backend_name() == 'pytorch':
+                import horovod.torch as hvd
+            else:
+                import horovod.keras as hvd
+            print ("initializing horovod")
+            self.process_comm.Barrier()
+            hvd.init(comm=self.process_comm)
+            self.process_comm.Barrier()
+            self.algo.worker_optimizer_builder.horovod_wrapper = True
+        
+        self.rank = parent_comm.Get_rank() if parent_comm else 0
+        self.ranks = "{0}:{1}:{2}".format(
+            MPI.COMM_WORLD.Get_rank(),
+            self.parent_comm.Get_rank() if self.parent_comm is not None else '-',
+            self.process_comm.Get_rank() if self.process_comm is not None else '-')
+
+        Trace.set_process_name(type(self).__name__ + " " + self.ranks)
+
         self.build_model()
-        if self.parent_rank is not None:
+        if (self.parent_rank is not None and self.parent_comm is not None):
             self.bcast_weights( self.parent_comm )
+        if (self.parent_rank is not None and self.parent_comm is not None) or (self.process_comm):
+            print ("autostart")
             self.train()
 
-    def build_model(self):
+    def record_details(self, json_name=None, meta=None):
+        """to be implemented by the specific process
+        """
+        pass
+    
+    def history_key(self):
+        #return str(self.rank)
+        return self.ranks
+
+    def update_monitor(self, perf):
+        r= self.history_key()
+        self.histories.setdefault(r,{})['monitor'] = perf
+        
+    def update_history(self, items):
+        r= self.history_key()
+        self.model.update_history( items, self.histories.setdefault(r,{}))
+        #print (self.histories)
+        
+
+    def is_shadow(self, sync = False):
+        """signals that the process is a sub-process and should not act normally"""
+        if self.process_comm and sync:
+            import inspect
+            print ("syncing on the process communicator from",inspect.stack()[1][3])
+            self.process_comm.Barrier()
+        return self._is_shadow
+
+    def build_model(self, local_session=True):
         """Builds the Keras model and updates model-related attributes"""
-        self.model = self.model_builder.build_model()
-        self.compile_model()
+
+        tell_me = self.tell_build
+        print("building model",socket.gethostname(),self.ranks)
+        self.model = self.model_builder.build_model(local_session=local_session)
+
+        if tell_me: print ("weight pre-compile",socket.gethostname(),self.ranks)
         self.weights = self.model.get_weights()
-        self.weights_shapes = shapes_from_weights( self.weights )
-        self.update = weights_from_shapes( self.weights_shapes )
+        self.compile_model()
+        if tell_me: print ("getting weights",socket.gethostname(),self.ranks)
+        self.weights = self.model.get_weights()
+        if tell_me: print ("formatting update")
+        self.update = self.model.format_update()
+        if tell_me: print ("done with model",socket.gethostname(),self.ranks)
+        if tell_me: print ("moving on",socket.gethostname(),self.ranks)
 
     def check_sanity(self):
         """Throws an exception if any model attribute has not been set yet."""
-        for par in ['model','weights_shapes','weights','update']:
+        for par in ['model',
+                    #'weights_shapes',
+                    'weights','update']:
             if not hasattr(self, par) or getattr(self, par) is None:
-                raise Error("%s not found!  Process %d does not seem to be set up correctly." % (par,self.rank))
-
-    def init_callbacks(self, for_worker=False):
-        """Prepares all keras callbacks to be used in training.
-            Automatically attaches a History callback to the end of the callback list.
-            If for_worker is True, leaves out callbacks that only make sense 
-            with validation enabled."""
-        import keras.callbacks as cbks
-        remove_for_worker = [cbks.EarlyStopping, cbks.ModelCheckpoint]
-        if for_worker:
-            for obj in remove_for_worker:
-                self.callbacks_list = [ c for c in self.callbacks_list 
-                        if not isinstance(c, obj) ]
-        self.model.history = cbks.History()
-        self.callbacks = cbks.CallbackList( self.callbacks_list + [self.model.history] )
-
-        # it's possible to callback a different model than self
-        # (used by Sequential models)
-        if hasattr(self.model, 'callback_model') and self.model.callback_model:
-            self.callback_model = self.model.callback_model
-        else:
-            self.callback_model = self.model
-        self.callbacks.set_model(self.callback_model)
-        self.callback_model.stop_training = False
+                raise Error("%s not found!  Process %s does not seem to be set up correctly." % (par,self.ranks))
 
     def train(self):
         """To be implemented in derived classes"""
@@ -111,38 +168,63 @@ class MPIProcess(object):
         """Compile the model. Note that the compilation settings
             are relevant only for Workers because the Master updates
             its weights using an mpi_learn optimizer."""
-        print ("Process {0:d} compiling model".format(self.rank))
+        print ("Process {0} compiling model".format(self.ranks))
         self.algo.compile_model( self.model )
-
+        print ("compiled")
+        
     def print_metrics(self, metrics):
         """Display metrics computed during training or validation"""
-        names = self.model.metrics_names
-        if len(names) == 1:
-            print ("%s: %.3f" % (names[0],metrics))
-        else:
-            for name, metric in zip( names, metrics ):
-                print ("{0}: {1:.3f}".format(name,metric))
-            print ("")
+        self.model.print_metrics( metrics )
 
     def get_logs(self, metrics, val=False):
         """Get dictionary of logs computed during training.
             If val is True, appends 'val' to the beginning of each metric name"""
+        print ("Should not get here ever")
+        sys.exit(123)
         if val:
             return { 'val_'+name:np.asscalar(metric) for name, metric in 
-                    zip( self.model.metrics_names, metrics ) }
+                    zip( self.model.metrics_names(), metrics ) }
         else:
             return { name:np.asscalar(metric) for name, metric in 
-                    zip( self.model.metrics_names, metrics ) }
+                    zip( self.model.metrics_names(), metrics ) }
 
+    @trace(category="MPI")
     def do_send_sequence(self):
         """Actions to take when sending an update to parent:
             -Send the update (if the parent accepts it)
             -Sync time and model weights with parent"""
+        if self.is_shadow():
+            return            
+            #pass
+        tell = self.tell_send
+        if tell: print (self.ranks,"start send sequence",self.time_step)
         self.send_update(check_permission=True)
+        if tell: print ("update send")
         self.time_step = self.recv_time_step()
+        if tell: print ("new time step", self.time_step)
         self.recv_weights()
+        if tell: print ("weights received")
         self.algo.set_worker_model_weights( self.model, self.weights )
+        if tell: print ("end send sequence")
 
+    def apply_update(self):
+        """Updates weights according to update received from worker process"""
+        if self.tell_update:
+            print ("rank",self.ranks,"applying weights")
+            print (self.ranks,"weights",np.ravel(self.weights[0][0])[:10])
+            print (self.ranks,"weights",np.ravel(self.weights[1][0])[:10])
+            print (self.ranks,"update",np.ravel(self.update[0][0])[:10])
+            print (self.ranks,"update",np.ravel(self.update[1][0])[:10])
+        with np.errstate( divide='raise',
+                          invalid='raise',
+                          over='raise',
+                          #under ='raise'## might not be too bad
+                      ):
+            self.weights = self.algo.apply_update( self.weights, self.update )
+        if self.tell_update:
+            print (self.ranks,"new weights",np.ravel(self.weights[0][0])[:10])
+            print (self.ranks,"new weights",np.ravel(self.weights[1][0])[:10])
+        
     ### MPI-related functions below ###
 
     # This dict associates message strings with integers to be passed as MPI tags.
@@ -157,6 +239,8 @@ class MPIProcess(object):
             'history':        6,
             'weights':        12,
             'update':         12,
+            'begin_gem':      13,
+            'update_gem':     14,
             }
     # This dict is for reverse tag lookups.
     inv_tag_lookup = { value:key for key,value in tag_lookup.items() }
@@ -193,8 +277,23 @@ class MPIProcess(object):
                 raise Error("Attempting to receive %s from parent, but parent rank is None" % tag)
             source = self.parent_rank 
         tag_num = self.lookup_mpi_tag(tag)
+        if tag == 'history':
+            obj = comm.recv( source=source, tag=tag_num, status=status )
+            return obj
+        #if tag in ['bool','time']:
+        #    comm.Recv(obj, source=source, tag=tag_num, status=status )
+        #    return obj
         if buffer:
-            comm.Recv( obj, source=source, tag=tag_num, status=status )
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            comm.Recv( sub_o, source=source, tag=tag_num, status=status )
+                    else:
+                        comm.Recv( o, source=source, tag=tag_num, status=status )
+            else:
+                if self.tell_mpi: print ("self.recv",type(obj))
+                comm.Recv( obj, source=source, tag=tag_num, status=status )
             return obj
         else:
             obj = comm.recv( source=source, tag=tag_num, status=status )
@@ -215,10 +314,32 @@ class MPIProcess(object):
                 raise Error("Attempting to send %s to parent, but parent rank is None" % tag)
             dest = self.parent_rank
         tag_num = self.lookup_mpi_tag(tag)
-        if buffer:
-            comm.Send( obj, dest=dest, tag=tag_num )
-        else:
+        if tag in ['history']:
             comm.send( obj, dest=dest, tag=tag_num )
+            return
+        #if tag in ['time']:
+        #    comm.Send( obj, dest=dest, tag=tag_num )
+        #    return
+        if buffer:
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            comm.Send( sub_o, dest=dest, tag=tag_num )
+                    else:
+                        comm.Send( o, dest=dest, tag=tag_num )
+            else:
+                comm.Send( obj, dest=dest, tag=tag_num )
+        else:
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            comm.Send( sub_o, dest=dest, tag=tag_num )
+                    else:
+                        comm.Send( o, dest=dest, tag=tag_num )
+            else:
+                comm.send( obj, dest=dest, tag=tag_num )
 
     def bcast(self, obj, root=0, buffer=False, comm=None):
         """Wrapper around MPI.bcast/Bcast.  Returns the broadcasted object.
@@ -231,23 +352,31 @@ class MPIProcess(object):
         if comm is None:
             comm = self.parent_comm
         if buffer:
-            comm.Bcast( obj, root=root )
+            if type(obj) == list:
+                for o in obj:
+                    if type(o) == list:
+                        for sub_o in o:
+                            if self.tell_bcast: print ("BC",type(sub_o))
+                            comm.Bcast( sub_o, root=root )
+                    else:
+                        comm.Bcast(o, root=root )
+            else:
+                comm.Bcast( obj, root=root )
         else:
             obj = comm.bcast( obj, root=root )
             return obj
 
     def send_exit_to_parent(self):
+        if self.is_shadow( sync = True): return
         """Send exit tag to parent process, if parent process exists"""
         if self.parent_rank is not None:
             self.send( None, 'exit' )
 
     def send_history_to_parent(self):
+        if self.is_shadow():return        
         """Send keras history or dict of keras histories"""
         if self.parent_rank is not None:
-            if hasattr(self, 'histories'):
-                self.send( obj=self.histories, tag='history' )
-            else:
-                self.send( obj=self.model.history.history, tag='history' )
+            self.send( obj=self.histories, tag='history' )
 
     def send_arrays(self, obj, expect_tag, tag, comm=None, dest=None, check_permission=False):
         """Send a list of numpy arrays to the process specified by comm (MPI communicator) 
@@ -261,26 +390,44 @@ class MPIProcess(object):
             self.send_time_step( comm=comm, dest=dest )
             decision = self.recv_bool( comm=comm, source=dest )
             if not decision: return
-        for w in obj:
-            self.send( w, tag, comm=comm, dest=dest, buffer=True )
+        tell=self.tell_mpi
+        if tell: print ("send_arrays [1]",type(obj))
+        for o in obj:
+            if tell: print ("send_arrays [2]",type(o))
+            if type(o) == list:
+                for w in o:
+                    self.send( w, tag, comm=comm, dest=dest, buffer=True )
+            else:
+                self.send( o, tag, comm=comm, dest=dest, buffer=True )
 
     def send_weights(self, comm=None, dest=None, check_permission=False):
+        if self.is_shadow():return        
         """Send NN weights to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the weights we first send the tag 'begin_weights'."""
+        if self.tell_send:
+            print (self.ranks,"sending",np.ravel(self.weights[0][0])[:10])
+            print (self.ranks,"sending",np.ravel(self.weights[1][0])[:10])
         self.send_arrays( self.weights, expect_tag='begin_weights', tag='weights', 
                 comm=comm, dest=dest, check_permission=check_permission )
 
     def send_update(self, comm=None, dest=None, check_permission=False):
+        if self.is_shadow():return        
         """Send update to the process specified by comm (MPI communicator) and dest (rank).
             Before sending the update we first send the tag 'begin_update'"""
+        if self.tell_send:
+            print (self.ranks,"sending update",np.ravel(self.update[0][0])[:10])
+            print (self.ranks,"sending update",np.ravel(self.update[1][0])[:10])
         self.send_arrays( self.update, expect_tag='begin_update', tag='update', 
                 comm=comm, dest=dest, check_permission=check_permission )
 
     def send_time_step(self, comm=None, dest=None):
+        if self.is_shadow():return        
         """Send the current time step"""
+        #print ("sending the time step", self.time_step, type(self.time_step))
         self.send( obj=self.time_step, tag='time', dest=dest, comm=comm )
 
     def send_bool(self, obj, comm=None, dest=None):
+        if self.is_shadow():return        
         self.send( obj=obj, tag='bool', dest=dest, comm=comm )
 
     def recv_arrays(self, obj, tag, comm=None, source=None, add_to_existing=False):
@@ -290,119 +437,202 @@ class MPIProcess(object):
               tag: MPI tag accompanying the message
               add_to_existing: if true, add to existing object instead of replacing"""
         if add_to_existing:
+            print ("this needs some work")
             tmp = weights_from_shapes( [ w.shape for w in obj ] )
             self.recv_arrays( tmp, tag=tag, comm=comm, source=source )
             for i in range(len(obj)):
                 obj[i] += tmp[i]
             return
-        for w in obj:
-            self.recv( w, tag, comm=comm, source=source, buffer=True )
+        tell=self.tell_mpi        
+        if tell: print ("recv_arrays [1]",type(obj))
+        for o in obj:
+            if tell: print ("recv_arrays [2]",type(o))
+            if type(o) == list:
+                for w in o:
+                    self.recv( w, tag, comm=comm, source=source, buffer=True )
+            else:
+                self.recv( o, tag, comm=comm, source=source, buffer=True )
 
     def recv_weights(self, comm=None, source=None, add_to_existing=False):
         """Receive NN weights layer by layer from the process specified by comm and source"""
+        if self.is_shadow():return        
+        if self.tell_receive:
+            print (self.ranks,"before receiving",np.ravel(self.weights[0][0])[:10])
+            print (self.ranks,"before receiving",np.ravel(self.weights[1][0])[:10])
         self.recv_arrays( self.weights, tag='weights', comm=comm, source=source,
                 add_to_existing=add_to_existing )
+        if self.tell_receive:
+            print (self.ranks,"after receiving",np.ravel(self.weights[0][0])[:10])
+            print (self.ranks,"after receiving",np.ravel(self.weights[1][0])[:10])
 
     def recv_update(self, comm=None, source=None, add_to_existing=False):
         """Receive an update layer by layer from the process specified by comm and source.
             Add it to the current update if add_to_existing is True, 
             otherwise overwrite the current update"""
+        if self.is_shadow():return        
         self.recv_arrays( self.update, tag='update', comm=comm, source=source,
                 add_to_existing=add_to_existing )
 
     def recv_time_step(self, comm=None, source=None):
         """Receive the current time step"""
+        if self.is_shadow():return
         return self.recv( tag='time', comm=comm, source=source )
 
     def recv_bool(self, comm=None, source=None):
+        if self.is_shadow():return        
         return self.recv( tag='bool', comm=comm, source=source )
 
     def recv_exit_from_parent(self):
-        return self.parent_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
+        ir = None
+        if not self.is_shadow():
+            ir = self.parent_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
+        elif self.process_comm:
+            ir = self.process_comm.irecv( source=0, tag=self.lookup_mpi_tag('exit') )
+        return ir
+
 
     def bcast_weights(self, comm, root=0):
         """Broadcast weights shape and weights (layer by layer) 
             on communicator comm from the indicated root rank"""
-        self.weights_shapes = self.bcast( 
-                self.weights_shapes, comm=comm, root=root )
-        if self.weights is None:
-            self.weights = weights_from_shapes( self.weights_shapes )
-        for w in self.weights:
-            self.bcast( w, comm=comm, root=root, buffer=True )
+        if self.tell_bcast: print(self.ranks,"bcasting weights")
+        self.bcast( self.weights, comm=comm, root=root, buffer=True )
 
 
+                
 class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
-    def __init__(self, data, algo, model_builder, parent_comm, parent_rank=None, 
-            num_epochs=1, callbacks=[], verbose=False, custom_objects={}):
+    def __init__(self, data, algo, model_builder, process_comm, parent_comm, parent_rank=None, 
+            num_epochs=1, verbose=False, monitor=False, custom_objects={}):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
-        if parent_rank is None:
-            raise Error("MPIWorker initialized without parent rank")
-        info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}" 
-        print (info.format(parent_comm.Get_rank(),parent_rank, parent_comm.Get_size()))
-        super(MPIWorker, self).__init__( parent_comm, parent_rank, 
+        info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}"
+        tell_comm = parent_comm if parent_comm is not None else process_comm
+        if tell_comm: print (info.format(tell_comm.Get_rank(),
+                           parent_rank,
+                           tell_comm.Get_size()))
+
+        super(MPIWorker, self).__init__( parent_comm, process_comm, parent_rank,
                 num_epochs=num_epochs, data=data, algo=algo, model_builder=model_builder,
-                callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
+                verbose=verbose, monitor=monitor, custom_objects=custom_objects )
+
+    def build_model(self):
+        """Builds the Keras model and updates model-related attributes"""
+
+        self.validation_model = self.model_builder.build_model()
+        self.algo.compile_model( self.validation_model )
+        super(MPIWorker, self).build_model(local_session=False)
+
+    def sync_with_parent(self):
+        self.compute_update()
+        if self.algo.mode == 'gem':
+            self.do_gem_sequence()
+        else:
+            self.do_send_sequence()
+
+    def notify_parent(self):
+        """Notify parent that worker is ready to begin GEM sequence."""
+        self.send( None, 'begin_gem' )
+
+    def do_gem_sequence(self):
+        """GEM sequence on worker:
+         -Notify parent we are ready
+         -Receive central variable (weights) from master
+         -Compute the update with GEM
+         -Send the update to master and apply it to own weights
+        """
+        self.notify_parent()
+        self.recv_weights()
+        self.update = self.algo.compute_update_worker(self.weights, self.update)
+        self.send_update()
+        self.apply_update()
+        self.algo.set_worker_model_weights(self.model, self.weights)
 
     def train(self):
         """Wait for the signal to train. Then train for num_epochs epochs.
             In each step, train on one batch of input data, then send the update to the master
             and wait to receive a new set of weights.  When done, send 'exit' signal to parent.
         """
+        Trace.begin("train")
         self.check_sanity()
-        self.init_callbacks(for_worker=True)
-        self.callbacks.on_train_begin()
+
         self.await_signal_from_parent()
 
         # periodically check this request to see if the parent has told us to stop training
         exit_request = self.recv_exit_from_parent()
         for epoch in range(self.num_epochs):
-            print ("MPIWorker {0:d} beginning epoch {1:d}".format(self.rank, epoch))
-            self.callbacks.on_epoch_begin(epoch)
-            epoch_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
+            print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, epoch))
+            Trace.begin("epoch")
+            if self.monitor:
+                self.monitor.start_monitor()
+            epoch_metrics = np.zeros((1,))
             i_batch = 0
+
             for i_batch, batch in enumerate(self.data.generate_data()):
-                self.callbacks.on_batch_begin(i_batch)
-                train_metrics = self.train_on_batch(batch)
-                batch_logs = self.get_logs(train_metrics)
-                for i in range(len(train_metrics)):
-                    epoch_metrics[i] += train_metrics[i]
+                if self.process_comm:
+                    ## broadcast the weights to all processes
+                    ## alternative is to load the broadcast callback from horovod and call it here
+                    self.bcast_weights( comm=self.process_comm )
+                    if self.process_comm.Get_rank()!=0:
+                        self.model.set_weights(self.weights)
+
+                Trace.begin("train_on_batch")
+                train_metrics = self.model.train_on_batch( x=batch[0], y=batch[1] )
+                Trace.end("train_on_batch")
+                if epoch_metrics.shape != train_metrics.shape:
+                    epoch_metrics = np.zeros( train_metrics.shape)
+                epoch_metrics += train_metrics
                 if self.algo.should_sync():
-                    self.compute_update()
-                    self.do_send_sequence()
-                self.callbacks.on_batch_end(i_batch, batch_logs)
-                if exit_request.Test():
+                    self.sync_with_parent()
+                if exit_request and exit_request.Test():
                     self.stop_training = True
-                    print ("MPIWorker {0:d} received exit request from master".format(self.rank))
+                    if self.process_comm:
+                        for r in range(1, self.process_comm.Get_size()):
+                            ## propagate the exit signal to processes of this worker
+                            self.send_exit_to_child(r, comm=self.process_comm)
+                    print ("MPIWorker {0} received exit request from master".format(self.ranks))
                     break
+                if self._short_batches and i_batch>self._short_batches: break
+
+            if self.monitor:
+                self.monitor.stop_monitor()
+            epoch_metrics = epoch_metrics / float(i_batch+1)
+            l = self.model.get_logs( epoch_metrics )
+            self.update_history( l )
+            Trace.end("epoch")
+
             if self.stop_training:
                 break
-            epoch_metrics = [ m * 1.0 / (i_batch+1) for m in epoch_metrics ]
-            print ("Worker {0:d} average metrics:".format(self.rank))
-            self.print_metrics(epoch_metrics)
-            self.callbacks.on_epoch_end(epoch, self.get_logs(epoch_metrics)) 
-        print ("MPIWorker {0:d} signing off".format(self.rank))
+
+        print ("MPIWorker {0} signing off".format(self.ranks))
+        stats = None
+        if self.monitor:
+            stats = self.monitor.get_stats()
+            self.update_monitor( stats )
+        Trace.end("train", monitoring_stats=stats)
         self.send_exit_to_parent()
-        self.callbacks.on_train_end()
         self.send_history_to_parent()
+        self.data.finalize()
 
-    def train_on_batch(self, batch):
-        """Train on a single batch"""
-        train_loss = self.model.train_on_batch( batch[0], batch[1] )
-        if self.verbose:
-            print ("Worker {0:d} metrics:".format(self.rank))
-            self.print_metrics(train_loss)
-        return train_loss
-
+    @trace
     def compute_update(self):
         """Compute the update from the new and old sets of model weights"""
         self.update = self.algo.compute_update( self.weights, self.model.get_weights() )
 
     def await_signal_from_parent(self):
         """Wait for 'train' signal from parent process"""
-        self.recv( tag='train' )
+        if not self.is_shadow():
+            tag = self.recv( tag='train' )
+        if self.process_comm:
+            if self.process_comm.Get_rank() == 0:
+                for r in range(1,self.process_comm.Get_size()):
+                    print ("relaying the train tag to",r)
+                    self.send( None, tag='train', comm=self.process_comm, dest=r)
+            else:
+                print ("receiving the train tag")
+                self.recv( tag='train', comm=self.process_comm )
+
+
 
 class MPIMaster(MPIProcess):
     """This class sends model information to its worker processes and updates its model weights
@@ -423,7 +653,8 @@ class MPIMaster(MPIProcess):
 
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
             num_epochs=1, data=None, algo=None, model_builder=None, 
-            num_sync_workers=1, callbacks=[], verbose=False, custom_objects={}):
+                 num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None,
+                 threaded_validation=False):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -433,7 +664,13 @@ class MPIMaster(MPIProcess):
         if parent_rank is not None:
             self.has_parent = True
         self.best_val_loss = None
-        self.histories = {}
+        self.target_metric = (target_metric if type(target_metric)==tuple else tuple(map(lambda s : float(s) if s.replace('.','').isdigit() else s, target_metric.split(',')))) if target_metric else None
+        self.patience = (early_stopping if type(early_stopping)==tuple else tuple(map(lambda s : float(s) if s.replace('.','').isdigit() else s, early_stopping.split(',')))) if early_stopping else None
+        ## a couple of example
+        ##self.target_metric = ('val_acc','>', 0.97)
+        #self.patience = ('val_loss','~<',4)
+        #self.target_metric = ('combined_model:val_loss','<',1)#('val_acc','>', 0.97)
+        #self.patience = ('combined_model:val_loss','~<',2)        
         self.num_workers = child_comm.Get_size() - 1 #all processes but one are workers
         self.num_sync_workers = num_sync_workers
         info = ("Creating MPIMaster with rank {0} and parent rank {1}. "
@@ -442,9 +679,11 @@ class MPIMaster(MPIProcess):
                 child_comm.Get_size()))
         if self.num_sync_workers > 1:
             print ("Will wait for updates from {0:d} workers before synchronizing".format(self.num_sync_workers))
-        super(MPIMaster, self).__init__( parent_comm, parent_rank, data=data, 
+        self.threaded_validation = threaded_validation
+
+        super(MPIMaster, self).__init__( parent_comm, process_comm=None,parent_rank=parent_rank, data=data, 
                 algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
-                callbacks=callbacks, verbose=verbose, custom_objects=custom_objects )
+                verbose=verbose, monitor=monitor, custom_objects=custom_objects )
 
     def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""
@@ -480,8 +719,8 @@ class MPIMaster(MPIProcess):
          -If we accept, we signal the worker and wait to receive the update.
          -After receiving the update, we determine whether to sync with the workers.
          -Finally we run validation if we have completed one epoch's worth of updates."""
-        self.algo.staleness = self.time_step - self.recv_time_step( 
-                source=source, comm=self.child_comm )
+        child_time = self.recv_time_step( source=source, comm=self.child_comm )
+        self.algo.staleness = self.time_step - child_time
         accepted = self.accept_update()
         self.send_bool( accepted, dest=source, comm=self.child_comm )
         if accepted:
@@ -497,20 +736,37 @@ class MPIMaster(MPIProcess):
                     self.apply_update()
                     self.sync_parent()
                     self.sync_children()
-                self.update = weights_from_shapes( self.weights_shapes ) #reset update variable
-            if (self.algo.validate_every > 0 and 
-                    self.time_step % self.algo.validate_every == 0 and self.time_step > 0):
-                epoch_logs = self.validate()
-                self.callbacks.on_epoch_end(self.epoch, epoch_logs)
-                self.epoch += 1
-                self.callbacks.on_epoch_begin(self.epoch)
+                self.update = self.model.format_update()
+            if (self.algo.validate_every > 0 and self.time_step > 0):
+                ##print ("to validation",self.time_step,self.algo.validate_every,self.time_step % self.algo.validate_every)
+                if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
+                    self.validate(self.weights)
+                    self.epoch += 1
         else:
             self.sync_child(source)
 
+    def do_gem_sequence(self, source):
+        """Gradient enery matching procedure:
+         -Send the current central variable (weights) to worker.
+         -Wait to receive the update and apply it.
+         -Finally we run validation if we have completed one epoch's worth of updates."""
+        self.send_weights( dest=source, comm=self.child_comm )
+
+    def do_gem_update_sequence(self, source):
+        self.recv_update( source=source, comm=self.child_comm )
+        self.apply_update()
+        #Update model weights and signal all waiting workers to work again.
+        self.time_step += 1
+        if (self.algo.validate_every > 0 and self.time_step > 0):
+            if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
+                self.validate(self.weights)
+                self.epoch += 1
+
     def do_worker_finish_sequence(self, worker_id):
         """Actions to take when a worker finishes training and returns its history"""
-        key = "%d_%d" % (self.rank, worker_id)
-        self.histories[key] = self.recv_history_from_child(worker_id)
+        self.histories.update( self.recv_history_from_child(worker_id) )
+        #key = "%d_%d" % (self.rank, worker_id)
+        #self.histories[key] = self.recv_history_from_child(worker_id)
         self.running_workers.remove(worker_id)
         self.num_sync_workers -= 1
 
@@ -519,12 +775,18 @@ class MPIMaster(MPIProcess):
             Returns the tag of the message received.
             Possible messages are:
             -begin_update: worker is ready to send a new update
+            -begin_gem: Worker needs central variable to start GEM
             -exit: worker is done training and will shut down
         """
         source = status.Get_source()
         tag = self.lookup_mpi_tag( status.Get_tag(), inv=True )
         if tag == 'begin_update':
-            self.do_update_sequence(source)
+            if self.algo.mode == 'gem':
+                self.do_gem_update_sequence(source)
+            else:
+                self.do_update_sequence(source)
+        elif tag == 'begin_gem':
+            self.do_gem_sequence(source)
         elif tag == 'exit':
             self.do_worker_finish_sequence(source)
         else:
@@ -542,58 +804,165 @@ class MPIMaster(MPIProcess):
             Receive messages from workers and processes each message until training is done.
             When finished, signal the parent process that training is complete.
         """
+        Trace.begin("train")
+        self.start_time = time.time()
         self.check_sanity()
         self.bcast_weights( comm=self.child_comm )
-        self.init_callbacks(for_worker=self.has_parent)
-        self.callbacks.on_train_begin()
         self.signal_children()
+
+        if self.threaded_validation:
+            self.validation_queue = queue.Queue()
+            self.validation_thread = threading.Thread(target=MPIMaster.validation_worker, args = (self, ))
+            self.validation_thread.start()
 
         status = MPI.Status()
         self.running_workers = list(range(1, self.num_workers+1))
         self.waiting_workers_list = []
         
         self.epoch = 0
-        self.callbacks.on_epoch_begin(self.epoch)
         while self.running_workers:
             self.recv_any_from_child(status)
             self.process_message( status )
-            if (not self.stop_training) and self.callback_model.stop_training:
+            if (self.stop_training):
                 self.shut_down_workers()
-                self.stop_training = True
-        print ("MPIMaster {0:d} done training".format(self.rank))
+        print ("MPIMaster {0} done training".format(self.ranks))
         # If we did not finish the last epoch, validate one more time.
         # (this happens if the batch size does not divide the dataset size)
-        if self.epoch < self.num_epochs:
-            epoch_logs = self.validate()
-            self.callbacks.on_epoch_end(self.epoch, epoch_logs)
-        self.histories[str(self.rank)] = self.model.history.history
+        if self.epoch < self.num_epochs or not self.histories.get(self.history_key(),None):
+            epoch_logs = self.validate(self.weights)
+        if self.threaded_validation:
+            self.validation_queue.put(None)
+            self.validation_queue.join()
+            self.validation_thread.join()
         self.send_exit_to_parent()
-        self.callbacks.on_train_end()
         self.send_history_to_parent()
-        if not self.has_parent:
-            return self.histories
+        self.data.finalize()
+        self.stop_time = time.time()
+        Trace.end("train")
 
-    def validate(self):
+
+    def record_details(self, json_name=None, meta=None):
+        ## for the uber master, save yourself
+        out_dict = { "train_time" : self.stop_time - self.start_time,
+                     "history":self.histories}
+        if meta is not None:
+            out_dict.update( meta )
+
+        if not json_name:
+            json_name = 'master-history-%s-%s.json'%(os.getpid(), self.start_time)
+
+        if self.model:
+            model_file = json_name.replace('.json','.model')
+            self.model.save( model_file )
+
+        if self.algo:
+            algo_file = json_name.replace('.json','.algo')
+            self.algo.save( algo_file )
+
+        with open( json_name, 'w') as out_file:
+            out_file.write( json.dumps(out_dict, indent=4, separators=(',',': ')) )
+
+        return self.histories
+
+    def validation_worker(self):
+        """Main function of the validation thread"""
+        print("Validation thread started")
+        while True:
+            item = self.validation_queue.get()
+            if item is None:
+                print ("Validation thread signing off")
+                self.validation_queue.task_done()
+                break
+            weights, model = item
+            try:
+                self.validate_aux(weights, model)
+            except Exception as e:
+                print (e)
+            self.validation_queue.task_done()
+
+    def validate(self, weights):
+        if self.threaded_validation:
+            model = self.validation_model
+            self.validation_queue.put((weights, model))
+        else:
+            return self.validate_aux(weights, self.model)
+        
+    
+    def validate_aux(self, weights, model):
         """Compute the loss on the validation data.
             Return a dictionary of validation metrics."""
+        Trace.begin("validation", "VALIDATION")
+        tell = True
         if self.has_parent:
             return {}
-        self.model.set_weights(self.weights)
+        model.set_weights(weights)
 
-        val_metrics = [ 0.0 for i in range( len(self.model.metrics_names) ) ]
+        if tell: print ("Starting validation")
+        val_metrics = np.zeros((1,))
         i_batch = 0
         for i_batch, batch in enumerate(self.data.generate_data()):
-            new_val_metrics = self.model.test_on_batch(*batch)
-            for i in range(len(val_metrics)):
-                val_metrics[i] += new_val_metrics[i]
-        val_metrics = [ m * 1.0 / (i_batch+1) for m in val_metrics ]
+            new_val_metrics =  model.test_on_batch(x=batch[0], y =batch[1] )
+            if val_metrics.shape != new_val_metrics.shape:
+                val_metrics =  np.zeros(new_val_metrics.shape)
+            val_metrics += new_val_metrics
+            if self._short_batches and i_batch>self._short_batches: break
+        val_metrics = val_metrics / float(i_batch+1)
+        l = model.get_logs(val_metrics, val=True)
+        self.update_history( l )
+
+        if self.target_metric:
+            m,opp,v = self.target_metric
+            model,m= m.split(':') if ':' in m else (None,m)
+            ##print ("target validation",model,m,opp,v)
+            r = self.history_key()
+            use = self.histories[r].get(model,None) if model else self.histories[r]
+            if use:
+                if m in use and ((opp=='>' and use[m][-1]>v) or (opp=='<' and use[m][-1]<v)):
+                    print ("metric",m,"is",opp,v,"stop training")
+                    self.stop_training = True
+            else:
+                print ("fatal target stopping cannot get",m)
+                import sys
+                sys.exit(14)
+        if self.patience:
+            m,opp,p = self.patience
+            p = int(p)
+            model,m=m.split(':') if ':' in m else (None,m)
+            ##print ("patience validation",model,m,opp,p)
+            r = self.history_key()            
+            use = self.histories[r].get(model,None) if model else self.histories[r]
+            ref = None
+            smooth = False
+            if use:
+                if m in use:
+                    ##print ("using",use[m])
+                    if '~' in opp:
+                        smooth = True
+                        opp = opp.replace('~','')
+                        ## do the averaging
+                        if len(use[m])>=(2*p):
+                            ref = np.mean(use[m][-(2*p):-p])
+                            current = np.mean(use[m][-p:])
+                        else:
+                            if len(use[m])>=p:
+                                ref = use[m][-p]
+                                current = use[m][-1]
+                    if ref is not None and current is not None and ((ref<current and opp=='<') or (ref>current and opp=='>')):
+                        print ("metric",m,"is over",p,"patience boundary:",ref,"(ref)",opp,current,"(current)","with smoothing" if smooth else "")
+                        self.stop_training = True
+                else:
+                    print ("fatal early stopping cannot get",m)
+                    import sys
+                    sys.exit(14)                    
+            else:
+                print ("fatal early stopping cannot get",m)
+                import sys
+                sys.exit(14)                
         print ("Validation metrics:")
         self.print_metrics(val_metrics)
-        return self.get_logs(val_metrics, val=True)
-
-    def apply_update(self):
-        """Updates weights according to update received from worker process"""
-        self.weights = self.algo.apply_update( self.weights, self.update )
+        if tell: print ("Ending validation")
+        Trace.end("validation", "VALIDATION")
+        return None
 
     ### MPI-related functions below
 
@@ -611,5 +980,15 @@ class MPIMaster(MPIProcess):
     def recv_history_from_child(self, child):
         return self.recv( tag='history', source=child, comm=self.child_comm )
 
-    def send_exit_to_child(self, child):
-        return self.child_comm.isend( None, dest=child, tag=self.lookup_mpi_tag('exit') )
+    def send_exit_to_child(self, child, comm=None):
+        if comm is None:
+            comm = self.child_comm
+        return comm.isend( None, dest=child, tag=self.lookup_mpi_tag('exit') )
+    
+    def build_model(self):
+        """Builds the Keras model and updates model-related attributes"""
+
+        if self.threaded_validation:
+            self.validation_model = self.model_builder.build_model()
+            self.algo.compile_model( self.validation_model )
+        super(MPIMaster, self).build_model(local_session=self.threaded_validation)
