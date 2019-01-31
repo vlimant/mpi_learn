@@ -4,7 +4,7 @@
 import numpy as np
 try:
     from keras.models import Sequential, Model
-    from keras.layers import Dense, Activation, Dropout, Flatten, Input
+    from keras.layers import Dense, Activation, Dropout, Flatten, Input, Permute
     from keras.layers import Convolution2D, MaxPooling2D, Conv2D
     import keras.backend as K
 except:
@@ -24,7 +24,9 @@ def make_model(model_name):
             'mnist':make_mnist_model,
             'cifar10':make_cifar10_model,
             'mnist_torch':make_mnist_torch_model,
+            'topclass': make_topclass_model,
             'topclass_torch':make_topclass_torch_model
+        
             }
     return model_maker_dict[model_name]()
 
@@ -35,6 +37,39 @@ def make_example_model():
     model.add(Activation("relu"))
     model.add(Dense(output_dim=10))
     model.add(Activation("softmax"))
+    return model
+
+def make_topclass_model(**args):
+    conv_layers=2
+    dense_layers=2
+    dropout=0.5
+    classes=3
+    in_channels=5
+    in_ch = in_channels
+    input = Input( (200,200,in_ch))
+    c = Permute((0,1,2))(input)
+    ## convs
+    for i in range(conv_layers):
+        channel_in = in_ch*((i+1)%5)
+        channel_out = in_ch*((i+2)%5)
+        if channel_in == 0: channel_in += 1
+        if channel_out == 0: channel_out += 1
+        print (i, channel_out)
+        #c = Conv2D( channel_out, (3,3) , activation = 'relu', strides=1, padding=1) (c)
+        c = Conv2D( filters=channel_out, kernel_size=(3,3) , padding="same", activation = 'relu') (c)
+    c = Conv2D(1, (3,3), activation = 'relu',strides=2, padding="same")(c)
+    ## pooling
+    p  = MaxPooling2D((100,100))(c)
+    f = Flatten()(p)
+    d = f 
+    for i in range(dense_layers):
+        d = Dense( int(10000//(2**(i+1))), activation='relu')(d)
+        if dropout:
+            d = Dropout(dropout)(d)
+    o = Dense(classes, activation='softmax')(d)
+
+    model = Model(inputs=input, outputs=o)
+    model.summary()
     return model
 
 def make_cifar10_model(**args):
