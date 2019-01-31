@@ -46,24 +46,26 @@ def make_topclass_model(**args):
     classes=3
     in_channels=5
     in_ch = in_channels
-    input = Input( (200,200,in_ch))
-    c = Permute((0,1,2))(input)
+    ## the trace in the input file is 750, 150, 94, 5
+    input = Input( (150,94,in_ch))
     ## convs
+    c = input
     for i in range(conv_layers):
         channel_in = in_ch*((i+1)%5)
         channel_out = in_ch*((i+2)%5)
         if channel_in == 0: channel_in += 1
         if channel_out == 0: channel_out += 1
-        print (i, channel_out)
-        #c = Conv2D( channel_out, (3,3) , activation = 'relu', strides=1, padding=1) (c)
-        c = Conv2D( filters=channel_out, kernel_size=(3,3) , padding="same", activation = 'relu') (c)
+        c = Conv2D( filters=channel_out, kernel_size=(3,3) , strides=1, padding="same", activation = 'relu') (c)
     c = Conv2D(1, (3,3), activation = 'relu',strides=2, padding="same")(c)
+
     ## pooling
-    p  = MaxPooling2D((100,100))(c)
-    f = Flatten()(p)
+    m  = MaxPooling2D((10,10))(c)
+    f = Flatten()(m)
     d = f 
     for i in range(dense_layers):
-        d = Dense( int(10000//(2**(i+1))), activation='relu')(d)
+        N = int(10000//(2**(i+1)))
+        print (N)
+        d = Dense( N, activation='relu')(d)
         if dropout:
             d = Dropout(dropout)(d)
     o = Dense(classes, activation='softmax')(d)
