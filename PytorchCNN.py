@@ -56,10 +56,13 @@ class _ConvBlock(nn.Sequential):
         return x
 
 class _DenseBlock(nn.Sequential):
-    def __init__(self, dense_layers, dropout):
+    def __init__(self, dense_layers, dropout ,base):
         super().__init__()
         for i in range(dense_layers):
-            self.add_module('denselayer%d'%(i), nn.Linear(int(10000//(2**i)), int(10000//(2**(i+1)))))
+            il = int(base//(2**i))
+            ol = int(base//(2**(i+1)))
+            print (il,"=>",ol)
+            self.add_module('denselayer%d'%(i), nn.Linear(il, ol))
             self.add_module('relu%d'%(i), nn.ReLU(inplace=True))
         self.dropout = dropout
 
@@ -75,10 +78,15 @@ class CNN(nn.Module):
         self.build_net(conv_layers, dense_layers, dropout, classes, in_channels)
     
     def build_net(self,*args, **kwargs):
+        base_2 = 10
+        base = base_2**2
         self.conv_layers = _ConvBlock(args[0], args[2], args[4])
-        self.dense_layers = _DenseBlock(args[1], args[2])
-        self.adapt_pool = nn.AdaptiveMaxPool2d((100,100))
-        self.output = nn.Linear(int(10000//(2**args[1])), int(args[3]))
+        self.dense_layers = _DenseBlock(args[1], args[2], base)
+        self.adapt_pool = nn.AdaptiveMaxPool2d((base_2,base_2))
+        il = int(base//(2**(args[1])))
+        ol = int(args[3])
+        print (il,"=>",ol)
+        self.output = nn.Linear(il, ol)
 
     def forward(self, x):
         x = x.permute(0,3,1,2).float()        
