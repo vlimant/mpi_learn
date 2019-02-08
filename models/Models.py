@@ -42,7 +42,7 @@ def make_example_model():
 def make_topclass_model(**args):
     conv_layers=2
     dense_layers=2
-    dropout=0.5
+    dropout=0.2
     classes=3
     in_channels=5
     in_ch = in_channels
@@ -63,7 +63,11 @@ def make_topclass_model(**args):
     f = Flatten()(m)
     d = f 
     for i in range(dense_layers):
-        N = int(10000//(2**(i+1)))
+        #N = int(10000//(2**(i+1)))
+        #N = int(1000//(2**(i+1)))
+        N = int(500//(2**(i+1)))
+        #N = int(100//(2**(i+1)))
+
         print (N)
         d = Dense( N, activation='relu')(d)
         if dropout:
