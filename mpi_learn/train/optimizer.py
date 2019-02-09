@@ -533,12 +533,15 @@ class OptimizerBuilder(object):
     def __init__(self, name, config=None, horovod_wrapper=False):
         self.name = name
         self.config = config
+        if self.config is None:
+            self.config = {}
+        if self.name == 'sgd' and 'lr' not in self.config:
+            print("Learning rate for SGD not set, using 1.0.")
+            self.config['lr'] = 1.
         self.horovod_wrapper = horovod_wrapper
 
     def build(self):
         from keras.optimizers import deserialize
-        if self.config is None:
-            self.config = {}
         opt_config = {'class_name': self.name, 'config': self.config}
         opt = deserialize(opt_config)
         if self.horovod_wrapper:
@@ -550,7 +553,16 @@ class OptimizerBuilder(object):
 
     def build_torch(self, model):
         import torch
-        opt = torch.optim.SGD(model.parameters(), 1.)
+        lookup = {
+            'sgd':      torch.optim.SGD,
+            'adadelta': torch.optim.Adadelta,
+            'rmsprop':  torch.optim.RMSprop,
+            'adam':     torch.optim.Adam
+            }
+        if self.name not in lookup:
+            print("No optimizer '{}' found, using SGD instead", self.name)
+            self.name = 'sgd'
+        opt = lookup[self.name](model.parameters(), **self.config)
         if self.horovod_wrapper:
             import horovod.torch as hvd
             opt = hvd.DistributedOptimizer(opt, named_parameters=model.named_parameters())
