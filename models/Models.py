@@ -63,15 +63,11 @@ def make_topclass_model(**args):
     f = Flatten()(m)
     d = f 
     for i in range(dense_layers):
-<<<<<<< HEAD
-        N = int(10000//(2**(i+1)))
-=======
         #N = int(10000//(2**(i+1)))
         #N = int(1000//(2**(i+1)))
         N = int(500//(2**(i+1)))
         #N = int(100//(2**(i+1)))
 
->>>>>>> vlimant/master
         print (N)
         d = Dense( N, activation='relu')(d)
         if dropout:
