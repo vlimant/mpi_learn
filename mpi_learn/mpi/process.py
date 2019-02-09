@@ -947,6 +947,7 @@ class MPIMaster(MPIProcess):
                             if len(use[m])>=p:
                                 ref = use[m][-p]
                                 current = use[m][-1]
+                                current = None
                     if ref is not None and current is not None and ((ref<current and opp=='<') or (ref>current and opp=='>')):
                         print ("metric",m,"is over",p,"patience boundary:",ref,"(ref)",opp,current,"(current)","with smoothing" if smooth else "")
                         self.stop_training = True

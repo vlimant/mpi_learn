@@ -310,6 +310,8 @@ class TFOptimizer(Optimizer):
 
     def save(self, fn='train_history'):
         fn = re.sub(r'\.algo$', '', fn)
+        if not fn.startswith('./'):
+            fn = './' + fn
         path = self.saver.save(self.sess, fn)
         print("Saved state to", path)
 
