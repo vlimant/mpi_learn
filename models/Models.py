@@ -17,7 +17,7 @@ try:
 except:
     print ("no torch support")
 
-def make_model(model_name):
+def model_function(model_name):
     """Constructs the Keras model indicated by model_name"""
     model_maker_dict = {
             'example':make_example_model,
@@ -28,7 +28,9 @@ def make_model(model_name):
             'topclass_torch':make_topclass_torch_model
         
             }
-    return model_maker_dict[model_name]()
+    return model_maker_dict[model_name]    
+def make_model(model_name):    
+    return model_function(model_name)()
 
 def make_example_model():
     """Example model from keras documentation"""
