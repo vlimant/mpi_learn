@@ -42,9 +42,10 @@ def make_example_model():
     return model
 
 def make_topclass_model(**args):
-    conv_layers=2
-    dense_layers=2
-    dropout=0.2
+    conv_layers=args.get('conv_layers',2)
+    dense_layers=args.get('dense_layers',2)
+    dropout=args.get('dropout',0.2)
+    kernel = args.get('kernel',3)
     classes=3
     in_channels=5
     in_ch = in_channels
@@ -57,20 +58,17 @@ def make_topclass_model(**args):
         channel_out = in_ch*((i+2)%5)
         if channel_in == 0: channel_in += 1
         if channel_out == 0: channel_out += 1
-        c = Conv2D( filters=channel_out, kernel_size=(3,3) , strides=1, padding="same", activation = 'relu') (c)
-    c = Conv2D(1, (3,3), activation = 'relu',strides=2, padding="same")(c)
+        c = Conv2D( filters=channel_out, kernel_size=(kernel,kernel) , strides=1, padding="same", activation = 'relu') (c)
+    c = Conv2D(1, (kernel,kernel), activation = 'relu',strides=2, padding="same")(c)
 
     ## pooling
-    m  = MaxPooling2D((10,10))(c)
+    pool = args.get('pool', 10)
+    m  = MaxPooling2D((pool,pool))(c)
     f = Flatten()(m)
-    d = f 
+    d = f
+    base = args.get('hidden_factor',5)*100
     for i in range(dense_layers):
-        #N = int(10000//(2**(i+1)))
-        #N = int(1000//(2**(i+1)))
-        N = int(500//(2**(i+1)))
-        #N = int(100//(2**(i+1)))
-
-        print (N)
+        N = int(base//(2**(i+1)))
         d = Dense( N, activation='relu')(d)
         if dropout:
             d = Dropout(dropout)(d)
