@@ -239,6 +239,11 @@ class MPITModel(MPIModel):
         if loss and loss.endswith('Loss'):
             loss = loss[:-4]
         lookup = {
+            # Keras mapped losses
+            'categorical_crossentropy': torch.nn.CrossEntropyLoss,
+            'mean_squared_error' : torch.nn.MSELoss,
+            'mean_absolute_error' : torch.nn.L1Loss,
+            # PyTorch losses 
             'L1': torch.nn.L1Loss,
             'MSE': torch.nn.MSELoss,
             'CrossEntropy': torch.nn.CrossEntropyLoss,
@@ -261,6 +266,7 @@ class MPITModel(MPIModel):
         if loss in lookup:
             return lookup[loss]()
         else:
+            print("WARNING: No loss mapping found, using CrossEntropyLoss")
             return torch.nn.CrossEntropyLoss()
 
     def _accuracy(self, output, target, topk=(1,)):
