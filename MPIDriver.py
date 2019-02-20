@@ -63,6 +63,8 @@ if __name__ == '__main__':
                         dest='target_metric', help='Passing configuration for a target metric')
     parser.add_argument('--worker-optimizer',help='optimizer for workers to use',
             dest='worker_optimizer', default='sgd')
+    parser.add_argument('--worker-optimizer-params',help='worker optimizer parameters (string representation of a dict)',
+            dest='worker_optimizer_params', default='{}')
     parser.add_argument('--sync-every', help='how often to sync weights with master', 
             default=1, type=int, dest='sync_every')
     parser.add_argument('--mode',help='Mode of operation.'
@@ -166,16 +168,20 @@ if __name__ == '__main__':
         algo = Algo(None, loss=args.loss, validate_every=validate_every,
                 mode='easgd', sync_every=args.sync_every,
                 worker_optimizer=args.worker_optimizer,
+                worker_optimizer_params=args.worker_optimizer_params,
                 elastic_force=args.elastic_force/(comm.Get_size()-1),
                 elastic_lr=args.elastic_lr, 
                 elastic_momentum=args.elastic_momentum) 
     elif args.mode == 'gem':
         algo = Algo('gem', loss=args.loss, validate_every=validate_every,
-                mode='gem', sync_every=args.sync_every, worker_optimizer=args.worker_optimizer,
+                mode='gem', sync_every=args.sync_every,
+                worker_optimizer=args.worker_optimizer,
+                worker_optimizer_params=args.worker_optimizer_params,
                 learning_rate=args.gem_lr, momentum=args.gem_momentum, kappa=args.gem_kappa)
     else:
         algo = Algo(args.optimizer, loss=args.loss, validate_every=validate_every,
-                sync_every=args.sync_every, worker_optimizer=args.worker_optimizer) 
+                sync_every=args.sync_every, worker_optimizer=args.worker_optimizer,
+                worker_optimizer_params=args.worker_optimizer_params) 
     if args.restore:
         algo.load(args.restore)
 

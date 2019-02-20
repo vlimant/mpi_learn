@@ -221,12 +221,9 @@ class MPITModel(MPIModel):
     def compile(self, **kwargs):
         import torch.nn
         import torch.optim
-        from torch.autograd import Variable
-        
-    
+
         ### need to map the loss string into the relevant torch object
-        self.loss = torch.nn.NLLLoss()
-        #self.loss = torch.nn.CrossEntropyLoss()
+        self.loss = self._build_loss(kwargs['loss'])
         for metric in kwargs['metrics']:
             if metric.lower() == 'acc' or metric.lower() == 'accuracy':
                 self.metrics_names.append('acc')
@@ -236,6 +233,41 @@ class MPITModel(MPIModel):
             self.optimizer = torch.optim.SGD(self.model.parameters(), 1.)
         else:
             self.optimizer = opt_builder.build_torch(self.model)
+
+    def _build_loss(self, loss):
+        import torch.nn
+        if loss and loss.endswith('Loss'):
+            loss = loss[:-4]
+        lookup = {
+            # Keras mapped losses
+            'categorical_crossentropy': torch.nn.CrossEntropyLoss,
+            'mean_squared_error' : torch.nn.MSELoss,
+            'mean_absolute_error' : torch.nn.L1Loss,
+            # PyTorch losses 
+            'L1': torch.nn.L1Loss,
+            'MSE': torch.nn.MSELoss,
+            'CrossEntropy': torch.nn.CrossEntropyLoss,
+            #'CTC': torch.nn.CTCLoss,
+            'NLL': torch.nn.NLLLoss,
+            'PoissonNLL': torch.nn.PoissonNLLLoss,
+            'KLDiv': torch.nn.KLDivLoss,
+            'BCE': torch.nn.BCELoss,
+            'BCEWithLogits': torch.nn.BCEWithLogitsLoss,
+            'MarginRanking': torch.nn.MarginRankingLoss,
+            'HingeEmbedding': torch.nn.HingeEmbeddingLoss,
+            'MultiLabelMargin': torch.nn.MultiLabelMarginLoss,
+            'SmoothL1': torch.nn.SmoothL1Loss,
+            'SoftMargin': torch.nn.SoftMarginLoss,
+            'MultiLabelSoftMargin': torch.nn.MultiLabelSoftMarginLoss,
+            'CosineEmbedding': torch.nn.CosineEmbeddingLoss,
+            'MultiMargin': torch.nn.MultiMarginLoss,
+            'TripletMargin': torch.nn.TripletMarginLoss
+        }
+        if loss in lookup:
+            return lookup[loss]()
+        else:
+            print("WARNING: No loss mapping found, using CrossEntropyLoss")
+            return torch.nn.CrossEntropyLoss()
 
     def _accuracy(self, output, target, topk=(1,)):
         """Computes the precision@k for the specified values of k"""
