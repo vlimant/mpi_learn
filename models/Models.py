@@ -29,8 +29,8 @@ def model_function(model_name):
         
             }
     return model_maker_dict[model_name]    
-def make_model(model_name):    
-    return model_function(model_name)()
+def make_model(model_name, **args):    
+    return model_function(model_name)(**args)
 
 def make_example_model():
     """Example model from keras documentation"""
@@ -141,6 +141,8 @@ def make_cifar10_model(**args):
 def make_mnist_model(**args):
     """MNIST ConvNet from keras/examples/mnist_cnn.py"""
     np.random.seed(1337)  # for reproducibility
+    if args:
+        print ("receiving arguments",args)
     nb_classes = 10
     # input image dimensions
     img_rows, img_cols = 28, 28
@@ -160,11 +162,11 @@ def make_mnist_model(**args):
     else:
         input_shape = (img_rows, img_cols, 1)
     model = Sequential()
-    model.add(Convolution2D(nb_filters, ks, ks,
+    model.add(Convolution2D(nb_filters, (ks, ks),
                             border_mode='valid',
                             input_shape=input_shape))
     model.add(Activation('relu'))
-    model.add(Convolution2D(nb_filters, ks, ks))
+    model.add(Convolution2D(nb_filters, (ks, ks)))
     model.add(Activation('relu'))
     model.add(MaxPooling2D(pool_size=pool_size))
     model.add(Dropout(do))
