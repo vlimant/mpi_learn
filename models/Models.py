@@ -75,7 +75,7 @@ def make_topclass_model(**args):
     o = Dense(classes, activation='softmax')(d)
 
     model = Model(inputs=input, outputs=o)
-    model.summary()
+    #model.summary()
     return model
 
 def make_cifar10_model(**args):
@@ -134,7 +134,7 @@ def make_cifar10_model(**args):
     o = Dense(nb_classes, activation='softmax')(l)
 
     model = Model(inputs=i, outputs=o)
-    model.summary()
+    #model.summary()
     
     return model
 
