@@ -12,13 +12,16 @@ import torchvision.models as models
 import torch.nn.functional as F
 
 class MNistNet(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, **args):
         super(MNistNet, self).__init__()
-        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-        self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(320, 50)
-        self.fc2 = nn.Linear(50, 10)
+        ks = args.get('kernel_size',5)
+        do = args.get('dropout',0.5)
+        dense = args.get('dense',50)
+        self.conv1 = nn.Conv2d(1, 10, kernel_size=ks)
+        self.conv2 = nn.Conv2d(10, 20, kernel_size=ks)
+        self.conv2_drop = nn.Dropout2d(do)
+        self.fc1 = nn.Linear(320, dense)
+        self.fc2 = nn.Linear(dense, 10)
         
     def forward(self, x):
         x = x.permute(0,3,1,2).float()
