@@ -206,15 +206,18 @@ def make_topclass_torch_model(**args):
 
 try:
     from skopt.space import Real, Integer, Categorical
-    mnist_range =     [
+    make_mnist_model.parameter_range =     [
         Integer(10,50, name='nb_filters'),
         Integer(2,10, name='pool_size'),
         Integer(2,10, name='kernel_size'),
         Integer(50,200, name='dense'),
         Real(0.0, 1.0, name='dropout')
     ]
-    make_mnist_model.parameter_range = mnist_range
-    make_mnist_torch_model.parameter_range = mnist_range
+    make_mnist_torch_model.parameter_range = [
+        Integer(2,10, name='kernel_size'),
+        Integer(50,200, name='dense'),
+        Real(0.0, 1.0, name='dropout')
+    ]
     make_topclass_model.parameter_range =   [
         Integer(1,6, name='conv_layers'),
         Integer(1,6, name='dense_layers'),
@@ -234,7 +237,7 @@ try:
         Integer(50,1000, name='dense2'),
         Real(0.0, 1.0, name='dropout1'),
         Real(0.0, 1.0, name='dropout2')
-        ]
+    ]
 except:
     pass
 
