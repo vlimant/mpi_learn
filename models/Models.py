@@ -189,7 +189,7 @@ def make_mnist_model(**args):
 
 def make_mnist_torch_model(**args):
     if args:print ("receiving arguments",args)    
-    from PytorchCNN import MNistNet
+    from TorchModels import MNistNet
     model = MNistNet(**args)
     return model
 
@@ -200,7 +200,7 @@ def make_topclass_torch_model(**args):
     dropout=args.get('dropout',0.5)
     classes=3
     in_channels=5
-    from PytorchCNN import CNN
+    from TorchModels import CNN
     model = CNN(conv_layers=conv_layers, dense_layers=dense_layers, dropout=dropout, classes=classes, in_channels=in_channels)
     return model
 
