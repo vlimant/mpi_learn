@@ -1,7 +1,8 @@
 ### Predefined Keras models
 
 #import setGPU
-import numpy as np
+#import numpy as np
+import sys
 try:
     from keras.models import Sequential, Model
     from keras.layers import Dense, Activation, Dropout, Flatten, Input, Permute
@@ -29,7 +30,14 @@ def model_function(model_name):
         
             }
     return model_maker_dict[model_name]    
-def make_model(model_name, **args):    
+def make_model(model_name, **args):
+    m_fn = model_function(model_name)
+    if args and hasattr(m_fn,'parameter_range'):
+        provided = set(args.keys())
+        accepted = set([a.name for a in m_fn.parameter_range])
+        if not provided.issubset( accepted ):
+            print ("provided arguments",sorted(provided),"do not match the accepted ones",sorted(accepted))
+            sys.exit(-1)
     return model_function(model_name)(**args)
 
 def make_example_model():
@@ -42,10 +50,11 @@ def make_example_model():
     return model
 
 def make_topclass_model(**args):
+    if args:print ("receiving arguments",args)    
     conv_layers=args.get('conv_layers',2)
     dense_layers=args.get('dense_layers',2)
     dropout=args.get('dropout',0.2)
-    kernel = args.get('kernel',3)
+    kernel = args.get('kernel_size',3)
     classes=3
     in_channels=5
     in_ch = in_channels
@@ -79,6 +88,7 @@ def make_topclass_model(**args):
     return model
 
 def make_cifar10_model(**args):
+    if args:print ("receiving arguments",args)    
     nb_classes = 10
     img_rows, img_cols = 32, 32
     
@@ -140,9 +150,8 @@ def make_cifar10_model(**args):
 
 def make_mnist_model(**args):
     """MNIST ConvNet from keras/examples/mnist_cnn.py"""
-    np.random.seed(1337)  # for reproducibility
-    if args:
-        print ("receiving arguments",args)
+    #np.random.seed(1337)  # for reproducibility
+    if args:print ("receiving arguments",args)
     nb_classes = 10
     # input image dimensions
     img_rows, img_cols = 28, 28
@@ -179,16 +188,53 @@ def make_mnist_model(**args):
     return model
 
 def make_mnist_torch_model(**args):
+    if args:print ("receiving arguments",args)    
     from PytorchCNN import MNistNet
-    model = MNistNet()
+    model = MNistNet(**args)
     return model
 
 def make_topclass_torch_model(**args):
-    conv_layers=2
-    dense_layers=2
-    dropout=0.5
+    if args:print ("receiving arguments",args)    
+    conv_layers=args.get('conv_layers',2)
+    dense_layers=args.get('dense_layers',2)
+    dropout=args.get('dropout',0.5)
     classes=3
     in_channels=5
     from PytorchCNN import CNN
     model = CNN(conv_layers=conv_layers, dense_layers=dense_layers, dropout=dropout, classes=classes, in_channels=in_channels)
     return model
+
+try:
+    from skopt.space import Real, Integer, Categorical
+    mnist_range =     [
+        Integer(10,50, name='nb_filters'),
+        Integer(2,10, name='pool_size'),
+        Integer(2,10, name='kernel_size'),
+        Integer(50,200, name='dense'),
+        Real(0.0, 1.0, name='dropout')
+    ]
+    make_mnist_model.parameter_range = mnist_range
+    make_mnist_torch_model.parameter_range = mnist_range
+    make_topclass_model.parameter_range =   [
+        Integer(1,6, name='conv_layers'),
+        Integer(1,6, name='dense_layers'),
+        Integer(1,6, name='kernel_size'),
+        Real(0.0, 1.0, name='dropout')
+    ]
+    make_topclass_torch_model.parameter_range =    [
+        Integer(1,6, name='conv_layers'),
+        Integer(1,6, name='dense_layers'),
+        Real(0.0,1.0, name='dropout')
+    ]
+    make_cifar10_model.parameter_range = [
+        Integer(10,300, name='nb_filters1'),
+        Integer(10,300, name='nb_filters2'),
+        Integer(10,300, name='nb_filters3'),
+        Integer(50,1000, name='dense1'),
+        Integer(50,1000, name='dense2'),
+        Real(0.0, 1.0, name='dropout1'),
+        Real(0.0, 1.0, name='dropout2')
+        ]
+except:
+    pass
+
