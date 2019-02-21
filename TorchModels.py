@@ -10,13 +10,16 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 import torchvision.models as models
 import torch.nn.functional as F
+import numpy
 
-class MNistNet(torch.nn.Module):
+class MNistNet(nn.Module):
     def __init__(self, **args):
         super(MNistNet, self).__init__()
-        ks = args.get('kernel_size',5)
-        do = args.get('dropout',0.5)
-        dense = args.get('dense',50)
+        ks = int(args.get('kernel_size',5))
+        do = float(args.get('dropout',0.5))
+        dense = int(args.get('dense',50))
+        print (dense, type(dense))
+        print (ks, type(ks))
         self.conv1 = nn.Conv2d(1, 10, kernel_size=ks)
         self.conv2 = nn.Conv2d(10, 20, kernel_size=ks)
         self.conv2_drop = nn.Dropout2d(do)
