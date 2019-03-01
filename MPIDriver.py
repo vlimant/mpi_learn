@@ -143,7 +143,10 @@ if __name__ == '__main__':
                 gpu_options=gpu_options
             ) ) )
         if args.tf:
-            model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=model_weights)
+            tf_device = device
+            if hide_device:
+                tf_device = 'gpu0' if 'gpu' in device else ''
+            model_builder = ModelFromJsonTF( comm, args.model_json, device_name=tf_device , weights=model_weights)
             print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
         else:
             model_builder = ModelFromJson( comm, args.model_json ,weights=model_weights)
