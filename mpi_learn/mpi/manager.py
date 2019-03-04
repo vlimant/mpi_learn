@@ -284,8 +284,8 @@ class MPIManager(object):
                                         monitor=self.monitor,
                                         custom_objects=self.custom_objects,
                                         early_stopping = self.early_stopping,
-                                        target_metric = self.target_metric
-                                        )
+                                        target_metric = self.target_metric,
+                                        checkpoint=self.checkpoint, checkpoint_interval=self.checkpoint_interval)
 
 
     def figure_of_merit(self):

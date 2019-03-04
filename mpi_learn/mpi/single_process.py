@@ -11,7 +11,8 @@ class MPISingleWorker(MPIWorker):
     """This class trains its model with no communication to other processes"""
     def __init__(self, num_epochs, data, algo, model_builder,
                 verbose, monitor, custom_objects,
-                early_stopping, target_metric):
+                early_stopping, target_metric,
+                checkpoint, checkpoint_interval):
 
         self.has_parent = False
 
@@ -20,13 +21,14 @@ class MPISingleWorker(MPIWorker):
         self.patience = (early_stopping if type(early_stopping)==tuple else tuple(map(lambda s : float(s) if s.replace('.','').isdigit() else s, early_stopping.split(',')))) if early_stopping else None
 
         super(MPISingleWorker, self).__init__(data, algo, model_builder, process_comm=None, parent_comm=None, parent_rank=None, 
-            num_epochs=num_epochs, verbose=verbose, monitor=monitor, custom_objects=custom_objects)
+            num_epochs=num_epochs, verbose=verbose, monitor=monitor, custom_objects=custom_objects,
+            checkpoint=checkpoint, checkpoint_interval=checkpoint_interval)
 
     def train(self):
         self.check_sanity()
 
-        for epoch in range(self.num_epochs):
-            print ("MPISingle {0} beginning epoch {1:d}".format(self.ranks, epoch))
+        for epoch in range(1, self.num_epochs + 1):
+            print ("MPISingle {0} beginning epoch {1:d}".format(self.ranks, self.epoch + epoch))
             if self.monitor:
                 self.monitor.start_monitor()
             epoch_metrics = np.zeros((1,))
@@ -56,6 +58,7 @@ class MPISingleWorker(MPIWorker):
                 break
 
             self.validate()
+            self.save_checkpoint()
 
         print ("MPISingle {0} signing off".format(self.ranks))
         if self.monitor:

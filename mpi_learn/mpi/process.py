@@ -129,7 +129,18 @@ class MPIProcess(object):
         """to be implemented by the specific process
         """
         pass
-    
+
+    def save_checkpoint(self):
+        if self.checkpoint is not None and self.epoch % self.checkpoint_interval == 0:
+            file_name = '{}-{}'.format(self.checkpoint, self.epoch)
+            if self.model:
+                self.model.save(file_name + '.model')
+            if self.algo:
+                self.algo.save(file_name + '.algo')
+
+            with open(self.checkpoint + '.latest', 'w') as latest:
+                latest.write(file_name)
+
     def history_key(self):
         #return str(self.rank)
         return self.ranks
@@ -861,17 +872,6 @@ class MPIMaster(MPIProcess):
         self.data.finalize()
         self.stop_time = time.time()
         Trace.end("train")
-
-    def save_checkpoint(self):
-        if self.checkpoint is not None and self.epoch % self.checkpoint_interval == 0:
-            file_name = '{}-{}'.format(self.checkpoint, self.epoch)
-            if self.model:
-                self.model.save(file_name + '.model')
-            if self.algo:
-                self.algo.save(file_name + '.algo')
-
-            with open(self.checkpoint + '.latest', 'w') as latest:
-                latest.write(file_name)
 
     def record_details(self, json_name=None, meta=None):
         ## for the uber master, save yourself
