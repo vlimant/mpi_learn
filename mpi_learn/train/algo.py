@@ -1,5 +1,5 @@
 ### Algo class
-
+import os
 import numpy as np
 from ast import literal_eval
 from .optimizer import get_optimizer, MultiOptimizer, OptimizerBuilder
@@ -76,6 +76,9 @@ class Algo(object):
         else:
             self.worker_update_type = 'update'
             self.send_before_apply = False
+
+        # Keep track if internal state was restored
+        self.restore = False
 
     def reset(self):
         ## reset any caching running values
@@ -165,4 +168,13 @@ class Algo(object):
             self.optimizer.save(fn)
 
     def load(self, fn):
-        self.optimizer = self.optimizer.load(fn)
+        if os.path.isfile(fn + '.latest'):
+            with open(fn + '.latest', 'r') as latest:
+                fn = latest.read().splitlines()[-1]
+        new_optimizer = self.optimizer.load(fn)
+        if new_optimizer is not None:
+            print("Restored state from {}".format(fn))
+            self.optimizer = new_optimizer
+            self.restore = True
+        else:
+            print("Failed to restore state from {}, starting srom scratch".format(fn))

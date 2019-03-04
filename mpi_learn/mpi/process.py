@@ -35,7 +35,8 @@ class MPIProcess(object):
     """
 
     def __init__(self, parent_comm, process_comm, parent_rank=None, num_epochs=1, data=None, algo=None,
-            model_builder=None, verbose=False, monitor=False, custom_objects={}):
+            model_builder=None, verbose=False, monitor=False, custom_objects={},
+            checkpoint=None, checkpoint_interval=5):
         """If the rank of the parent is given, initialize this process and immediately start 
             training. If no parent is indicated, training should be launched with train().
             
@@ -100,6 +101,22 @@ class MPIProcess(object):
             self.process_comm.Get_rank() if self.process_comm is not None else '-')
 
         Trace.set_process_name(type(self).__name__ + " " + self.ranks)
+
+        self.epoch = 0
+        self.checkpoint = checkpoint
+        self.checkpoint_interval = checkpoint_interval
+        if self.algo.restore and self.checkpoint is not None:
+            try:
+                with open(self.checkpoint + '.latest', 'r') as latest:
+                    latest_file = latest.read().splitlines()[-1]
+                epoch = int(latest_file.split('-')[-1])
+            except:
+                epoch = 0
+                print("Failed to restore epoch from checkpoint {}".format(self.checkpoint))
+            if epoch < num_epochs:
+                self.epoch = epoch
+                self.num_epochs = num_epochs - epoch
+                print("Continuing training from epoch {} for {} epochs".format(self.epoch, self.num_epochs))
 
         self.build_model()
         if (self.parent_rank is not None and self.parent_comm is not None):
@@ -503,7 +520,8 @@ class MPIWorker(MPIProcess):
     """This class trains its NN model and exchanges weight updates with its parent."""
 
     def __init__(self, data, algo, model_builder, process_comm, parent_comm, parent_rank=None, 
-            num_epochs=1, verbose=False, monitor=False, custom_objects={}):
+            num_epochs=1, verbose=False, monitor=False, custom_objects={},
+            checkpoint=None, checkpoint_interval=5):
         """Raises an exception if no parent rank is provided. Sets the number of epochs 
             using the argument provided, then calls the parent constructor"""
         info = "Creating MPIWorker with rank {0} and parent rank {1} on a communicator of size {2}"
@@ -514,7 +532,8 @@ class MPIWorker(MPIProcess):
 
         super(MPIWorker, self).__init__( parent_comm, process_comm, parent_rank,
                 num_epochs=num_epochs, data=data, algo=algo, model_builder=model_builder,
-                verbose=verbose, monitor=monitor, custom_objects=custom_objects )
+                verbose=verbose, monitor=monitor, custom_objects=custom_objects,
+                checkpoint=checkpoint, checkpoint_interval=checkpoint_interval )
 
     def build_model(self):
         """Builds the Keras model and updates model-related attributes"""
@@ -560,8 +579,8 @@ class MPIWorker(MPIProcess):
 
         # periodically check this request to see if the parent has told us to stop training
         exit_request = self.recv_exit_from_parent()
-        for epoch in range(self.num_epochs):
-            print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, epoch))
+        for epoch in range(1, self.num_epochs + 1):
+            print ("MPIWorker {0} beginning epoch {1:d}".format(self.ranks, self.epoch + epoch))
             Trace.begin("epoch")
             if self.monitor:
                 self.monitor.start_monitor()
@@ -654,7 +673,7 @@ class MPIMaster(MPIProcess):
     def __init__(self, parent_comm, parent_rank=None, child_comm=None, 
             num_epochs=1, data=None, algo=None, model_builder=None, 
                  num_sync_workers=1, verbose=False, monitor=False, custom_objects={}, early_stopping=None, target_metric=None,
-                 threaded_validation=False):
+                 threaded_validation=False, checkpoint=None, checkpoint_interval=5):
         """Parameters:
               child_comm: MPI communicator used to contact children"""
         if child_comm is None:
@@ -683,7 +702,8 @@ class MPIMaster(MPIProcess):
 
         super(MPIMaster, self).__init__( parent_comm, process_comm=None,parent_rank=parent_rank, data=data, 
                 algo=algo, model_builder=model_builder, num_epochs=num_epochs, 
-                verbose=verbose, monitor=monitor, custom_objects=custom_objects )
+                verbose=verbose, monitor=monitor, custom_objects=custom_objects,
+                checkpoint=checkpoint, checkpoint_interval=checkpoint_interval )
 
     def decide_whether_to_sync(self):
         """Check whether enough workers have sent updates"""
@@ -742,6 +762,7 @@ class MPIMaster(MPIProcess):
                 if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
                     self.validate(self.weights)
                     self.epoch += 1
+                    self.save_checkpoint()
         else:
             self.sync_child(source)
 
@@ -761,6 +782,7 @@ class MPIMaster(MPIProcess):
             if (self.time_step % self.algo.validate_every == 0) or (self._short_batches and self.time_step%self._short_batches == 0):
                 self.validate(self.weights)
                 self.epoch += 1
+                self.save_checkpoint()
 
     def do_worker_finish_sequence(self, worker_id):
         """Actions to take when a worker finishes training and returns its history"""
@@ -819,7 +841,6 @@ class MPIMaster(MPIProcess):
         self.running_workers = list(range(1, self.num_workers+1))
         self.waiting_workers_list = []
         
-        self.epoch = 0
         while self.running_workers:
             self.recv_any_from_child(status)
             self.process_message( status )
@@ -834,12 +855,23 @@ class MPIMaster(MPIProcess):
             self.validation_queue.put(None)
             self.validation_queue.join()
             self.validation_thread.join()
+        self.save_checkpoint()
         self.send_exit_to_parent()
         self.send_history_to_parent()
         self.data.finalize()
         self.stop_time = time.time()
         Trace.end("train")
 
+    def save_checkpoint(self):
+        if self.checkpoint is not None and self.epoch % self.checkpoint_interval == 0:
+            file_name = '{}-{}'.format(self.checkpoint, self.epoch)
+            if self.model:
+                self.model.save(file_name + '.model')
+            if self.algo:
+                self.algo.save(file_name + '.algo')
+
+            with open(self.checkpoint + '.latest', 'w') as latest:
+                latest.write(file_name)
 
     def record_details(self, json_name=None, meta=None):
         ## for the uber master, save yourself

@@ -31,9 +31,12 @@ class Optimizer(object):
     def load(self, fn = 'algo_.pkl'):
         if not fn.endswith('.algo'):
             fn = fn + '.algo'
-        d = open(fn, 'rb')
-        new_self = pickle.load( d )
-        d.close()
+        try:
+            d = open(fn, 'rb')
+            new_self = pickle.load( d )
+            d.close()
+        except:
+            new_self = None
         return new_self
 
 class MultiOptimizer(Optimizer):
@@ -334,7 +337,7 @@ class TFOptimizer(Optimizer):
             name='optimizer_op' # We may need to create uniqie name
         )
 
-        self.saver = tf.train.Saver(max_to_keep=1)
+        self.saver = tf.train.Saver(max_to_keep=None)
 
         if self.load_fn:
             self.saver.restore(self.sess, self.load_fn)
@@ -342,10 +345,13 @@ class TFOptimizer(Optimizer):
             self.sess.run(tf.global_variables_initializer())
 
     def load(self, fn='train_history'):
-        self.load_fn = re.sub(r'\.algo$', '', fn)
-        self.do_reset = True
-
-        return self
+        load_fn = re.sub(r'\.algo$', '', fn)
+        if os.path.isfile(load_fn + '.meta'):
+            self.load_fn = load_fn
+            self.do_reset = True
+            return self
+        else:
+            return None
 
     def apply_update(self, weights, gradient):
         if self.do_reset:
