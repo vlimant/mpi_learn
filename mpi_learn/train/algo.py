@@ -168,9 +168,6 @@ class Algo(object):
             self.optimizer.save(fn)
 
     def load(self, fn):
-        if os.path.isfile(fn + '.latest'):
-            with open(fn + '.latest', 'r') as latest:
-                fn = latest.read().splitlines()[-1]
         new_optimizer = self.optimizer.load(fn)
         if new_optimizer is not None:
             print("Restored state from {}".format(fn))

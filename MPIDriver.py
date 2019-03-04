@@ -97,7 +97,10 @@ if __name__ == '__main__':
 
     if args.restore:
         args.restore = re.sub(r'\.algo$', '', args.restore)
-        if not args.tf:
+        if os.path.isfile(args.restore + '.latest'):
+            with open(args.restore + '.latest', 'r') as latest:
+                args.restore = latest.read().splitlines()[-1]
+        if not args.tf and os.path.isfile(args.restore + '.model'):
             model_weights = args.restore + '.model'
 
     # Theano is the default backend; use tensorflow if --tf is specified.
