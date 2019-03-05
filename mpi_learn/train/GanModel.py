@@ -984,6 +984,9 @@ class GANModelBuilder(ModelBuilder):
         self.device = self.get_device_name(device_name) if self.tf else None
         self.model_parameters={}
 
+    def get_backend_name(self):
+        return 'tensorflow'
+    
     def set_params(self , **args):
         for k,v in args.items():
             self.model_parameters[k] = v
