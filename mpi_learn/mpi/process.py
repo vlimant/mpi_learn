@@ -180,7 +180,7 @@ class MPIProcess(object):
         """Get dictionary of logs computed during training.
             If val is True, appends 'val' to the beginning of each metric name"""
         print ("Should not get here ever")
-        sys.exit(123)
+        MPI.COMM_WORLD.Abort()
         if val:
             return { 'val_'+name:np.asscalar(metric) for name, metric in 
                     zip( self.model.metrics_names(), metrics ) }
@@ -922,8 +922,8 @@ class MPIMaster(MPIProcess):
                     self.stop_training = True
             else:
                 print ("fatal target stopping cannot get",m)
-                import sys
-                sys.exit(14)
+                MPI.COMM_WORLD.Abort()
+                
         if self.patience:
             m,opp,p = self.patience
             p = int(p)
@@ -953,12 +953,10 @@ class MPIMaster(MPIProcess):
                         self.stop_training = True
                 else:
                     print ("fatal early stopping cannot get",m)
-                    import sys
-                    sys.exit(14)                    
+                    MPI.COMM_WORLD.Abort()
             else:
                 print ("fatal early stopping cannot get",m)
-                import sys
-                sys.exit(14)                
+                MPI.COMM_WORLD.Abort()
         print ("Validation metrics:")
         self.print_metrics(val_metrics)
         if tell: print ("Ending validation")
