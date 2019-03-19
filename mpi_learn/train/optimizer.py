@@ -270,6 +270,8 @@ class RMSProp(RunningAverageOptimizer):
     def __init__(self, rho=0.9, epsilon=1e-8, learning_rate=0.001):
         super(RMSProp, self).__init__(rho, epsilon)
         self.init_learning_rate = learning_rate
+        self.reset()
+
     def reset(self):
         super(RMSProp, self).reset()
         self.learning_rate = self.init_learning_rate
@@ -434,6 +436,105 @@ class AdamTF(TFOptimizer):
 
         super(AdamTF, self).setup_update(weights)
 
+class TorchOptimizer(Optimizer):
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+        self.parameters = None
+        self.torch_optimizer = None
+        self.state = None
+
+        self.reset()
+
+    def reset(self):
+        self.do_reset = True
+
+    def apply_update(self, weights, gradient):
+        import torch
+        if self.do_reset:
+            self.setup_update(weights)
+            if self.state is not None:
+                self.torch_optimizer.load_state_dict(self.state)
+            self.do_reset = False
+
+        for p, w, g in zip (self.parameters, weights, gradient):
+            p.data.copy_(torch.from_numpy(w))
+            p.grad.data.copy_(torch.from_numpy(g))
+
+        self.torch_optimizer.step()
+        return [i.data.cpu().numpy() for i in list(self.parameters)]
+
+    def setup_update(self, weights):
+        import torch
+        if self.parameters is not None:
+            for p in self.parameters:
+                del p
+        else:
+            self.parameters = [None] * len(weights)
+        for i, w in enumerate(weights):
+            p = torch.from_numpy(w).cuda()
+            g = torch.from_numpy(w).cuda()
+            var = torch.autograd.Variable(p, requires_grad=True)
+            var.grad = torch.autograd.Variable(g)
+            self.parameters[i] = var
+
+    def save(self, fn=None):
+        if fn is None:
+            fn = 'master-opt-{}.algo'.format( os.getpid())
+
+        state = self.torch_optimizer.state_dict()
+        with open(fn, 'wb') as out_file:
+            pickle.dump(state, out_file)
+
+    def load(self, fn = 'algo_.pkl'):
+        if not fn.endswith('.algo'):
+            fn = fn + '.algo'
+        with open(fn, 'rb') as in_file:
+            self.state = pickle.load(in_file)
+        return self
+
+class SGDTorch(TorchOptimizer):
+    def __init__(self, lr=0.01, momentum=0, dampening=0, weight_decay=0, nesterov=False):
+        super(SGDTorch, self).__init__(lr=lr, momentum=momentum,
+            dampening=dampening, weight_decay=weight_decay, nesterov=nesterov)
+
+    def setup_update(self, weights):
+        super(SGDTorch, self).setup_update(weights)
+        import torch.optim as topt
+        self.torch_optimizer = topt.SGD(self.parameters, self.lr, self.momentum, self.dampening,
+            self.weight_decay, self.nesterov)
+
+class AdaDeltaTorch(TorchOptimizer):
+    def __init__(self, lr=1.0, rho=0.9, eps=1e-06, weight_decay=0):
+        super(AdaDeltaTorch, self).__init__(lr=lr, rho=rho, eps=eps, weight_decay=weight_decay)
+
+    def setup_update(self, weights):
+        super(AdaDeltaTorch, self).setup_update(weights)
+        import torch.optim as topt
+        self.torch_optimizer = topt.Adadelta(self.parameters, self.lr, self.rho, self.eps, self.weight_decay)
+
+class RMSPropTorch(TorchOptimizer):
+    def __init__(self, lr=0.01, alpha=0.99, eps=1e-08, weight_decay=0, momentum=0, centered=False):
+        super(RMSPropTorch, self).__init__(lr=lr, alpha=alpha, eps=eps, weight_decay=weight_decay,
+            momentum=momentum, centered=centered)
+
+    def setup_update(self, weights):
+        super(RMSPropTorch, self).setup_update(weights)
+        import torch.optim as topt
+        self.torch_optimizer = topt.RMSprop(self.parameters, self.lr, self.alpha, self.eps,
+            self.weight_decay, self.momentum, self.centered)
+
+class AdamTorch(TorchOptimizer):
+    def __init__(self, lr=0.001, betas=(0.9, 0.999), eps=1e-08, weight_decay=0):
+        super(AdamTorch, self).__init__(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay)
+
+    def setup_update(self, weights):
+        super(AdamTorch, self).setup_update(weights)
+        import torch.optim as topt
+        self.torch_optimizer = topt.Adam(self.parameters, self.lr, self.betas, self.eps,
+            self.weight_decay)
+
 class GEM(Optimizer):
     """GEM optimizer
         learning_rate: base learning rate, kept constant
@@ -514,16 +615,21 @@ def get_optimizer(name):
     """Get optimizer class by string identifier"""
     lookup = {
             # Native optimizers
-            'sgd':        VanillaSGD,
-            'adadelta':   AdaDelta,
-            'rmsprop':    RMSProp,
-            'adam':       Adam,
-            'gem':        GEM,
+            'sgd':           VanillaSGD,
+            'adadelta':      AdaDelta,
+            'rmsprop':       RMSProp,
+            'adam':          Adam,
+            'gem':           GEM,
             # Wrappers around TF's optimizers
-            'sgdtf':      GradientDescentTF,
-            'adadeltatf': AdaDeltaTF,
-            'rmsproptf':  RMSPropTF,
-            'adamtf':     AdamTF,
+            'sgdtf':         GradientDescentTF,
+            'adadeltatf':    AdaDeltaTF,
+            'rmsproptf':     RMSPropTF,
+            'adamtf':        AdamTF,
+            # Wrappers arount Torch's optimizers
+            'sgdtorch':      SGDTorch,
+            'adadeltatorch': AdaDeltaTorch,
+            'rmsproptorch':  RMSPropTorch,
+            'adamtorch':     AdamTorch,
             }
     return lookup[name]
 
