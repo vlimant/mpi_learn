@@ -393,9 +393,8 @@ class ModelFromJson(ModelBuilder):
             filename: path to JSON file specifying model architecture
     """
 
-    def __init__(self, comm, filename=None,json_str=None, custom_objects={}, weights=None):
+    def __init__(self, comm, filename=None, custom_objects={}, weights=None):
         self.filename = filename
-        self.json_str = json_str
         self.weights = weights
         self.custom_objects = custom_objects
         super(ModelFromJson, self).__init__(comm)
@@ -407,28 +406,31 @@ class ModelFromJson(ModelBuilder):
                 models.append(load_model(filename=fn))
             return MPIModel(models = models)
         else:        
-            return MPIModel(model=load_model(filename=self.filename, json_str=self.json_str, custom_objects=self.custom_objects, weights_file=self.weights))
+            return MPIModel(model=load_model(filename=self.filename, custom_objects=self.custom_objects, weights_file=self.weights))
 
     def get_backend_name(self):
         return 'keras'
 
-class ModelFromJsonTF(ModelBuilder):
+class ModelTensorFlow(ModelBuilder):
     """ModelBuilder class that builds from model architecture specified
         in a JSON file. Uses Tensorflow and builds the model on the 
         specified GPU.
         Attributes:
             filename: path to JSON file specifying model architecture
+            model:    (or) Keras model to be cloned
             device: name of the device to use (ex: "/gpu:2")
     """
 
-    def __init__(self, comm, filename=None, json_str=None, device_name='cpu', 
+    def __init__(self, comm, filename=None, model=None, device_name='cpu', 
             custom_objects={}, weights=None):
         self.filename = filename
-        self.json_str = json_str
+        self.model = model
+        if self.filename is not None and self.model is not None:
+            raise Exception("Model builder must be initialized with either filename or model, not both")
         self.weights = weights
         self.custom_objects = custom_objects
         self.device = self.get_device_name(device_name)
-        super(ModelFromJsonTF, self).__init__(comm)
+        super(ModelTensorFlow, self).__init__(comm)
 
     def get_device_name(self, device):
         """Returns a TF-style device identifier for the specified device.
@@ -461,7 +463,7 @@ class ModelFromJsonTF(ModelBuilder):
                     models.append(load_model(filename=fn, weights_file=w))
                 return MPIModel(models = models)
             else:
-                model = load_model(filename=self.filename, json_str=self.json_str, 
+                model = load_model(filename=self.filename, model=self.model,
                                 custom_objects=self.custom_objects, weights_file=self.weights)
                 return MPIModel(model = model)
 

@@ -14,7 +14,7 @@ from time import time,sleep
 from mpi_learn.mpi.manager import MPIManager, get_device
 from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
-from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF,ModelPytorch
+from mpi_learn.train.model import ModelFromJson, ModelTensorFlow, ModelPytorch
 from mpi_learn.utils import import_keras
 from mpi_learn.train.trace import Trace
 
@@ -150,7 +150,7 @@ if __name__ == '__main__':
             tf_device = device
             if hide_device:
                 tf_device = 'gpu0' if 'gpu' in device else ''
-            model_builder = ModelFromJsonTF( comm, args.model_json, device_name=tf_device , weights=model_weights)
+            model_builder = ModelTensorFlow( comm, filename=args.model_json, device_name=tf_device , weights=model_weights)
             print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
         else:
             model_builder = ModelFromJson( comm, args.model_json ,weights=model_weights)
