@@ -496,18 +496,24 @@ class ModelTensorFlow(ModelBuilder):
         return 'tensorflow'
 
 class ModelPytorch(ModelBuilder):
-    def __init__(self, comm, filename=None,
+    def __init__(self, comm, filename=None, model=None,
                  weights = None,
                  gpus=0):
         print("Initializing Pytorch model")
         super(ModelPytorch,self).__init__(comm)
         self.filename = filename
+        self.model = model
+        if self.filename is not None and self.model is not None:
+            raise Exception("Model builder must be initialized with either filename or model, not both")
         self.weights = weights
         self.gpus=gpus
 
     def build_model(self, local_session=True):
         import torch
-        model = torch.load(self.filename)
+        if self.filename is not None:
+            model = torch.load(self.filename)
+        elif self.model is not None:
+            model = copy.deepcopy(self.model)
         if self.weights:
             wd = torch.load(self.weights)
             model.load_state_dict(wd)
