@@ -97,6 +97,8 @@ if __name__ == '__main__':
         args.restore = re.sub(r'\.algo$', '', args.restore)
         if not args.tf:
             model_weights = args.restore + '.model'
+        if args.torch:
+            model_weights += '_w'
 
     # Theano is the default backend; use tensorflow if --tf is specified.
     # In the theano case it is necessary to specify the device before importing.
@@ -105,6 +107,8 @@ if __name__ == '__main__':
     hide_device = True
     if args.torch:
         print("Using pytorch")
+        if not args.optimizer.endswith("torch"):
+            args.optimizer = args.optimizer + 'torch'
         import torch
         if hide_device:
             os.environ['CUDA_VISIBLE_DEVICES'] = device[-1] if 'gpu' in device else ''

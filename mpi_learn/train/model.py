@@ -354,8 +354,8 @@ class MPITModel(MPIModel):
 
     def save(self, *args,**kwargs):
         import torch
-        weights_filename = args[0]+'_w.torch'
-        arch_filename = args[0]+'.torch'
+        weights_filename = args[0]+'_w'
+        arch_filename = args[0]
         torch.save( self.model.state_dict(), weights_filename)
         torch.save( self.model, arch_filename)
             
