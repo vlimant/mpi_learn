@@ -5,6 +5,7 @@ from .optimizer import OptimizerBuilder
 import numpy as np
 import copy
 import sys
+import six
 
 def session(f):
     def wrapper(*args, **kwargs):
@@ -416,17 +417,19 @@ class ModelTensorFlow(ModelBuilder):
         in a JSON file. Uses Tensorflow and builds the model on the 
         specified GPU.
         Attributes:
-            filename: path to JSON file specifying model architecture
-            model:    (or) Keras model to be cloned
+            source: path to JSON file specifying model architecture
+                    or Keras model to be cloned
             device: name of the device to use (ex: "/gpu:2")
     """
 
-    def __init__(self, comm, filename=None, model=None, device_name='cpu', 
+    def __init__(self, comm, source, device_name='cpu', 
             custom_objects={}, weights=None):
-        self.filename = filename
-        self.model = model
-        if self.filename is not None and self.model is not None:
-            raise Exception("Model builder must be initialized with either filename or model, not both")
+        if isinstance(source, six.string_types):
+            self.filename = source
+            self.model = None
+        else:
+            self.filename = None
+            self.model = source
         self.weights = weights
         self.custom_objects = custom_objects
         self.device = self.get_device_name(device_name)
@@ -496,15 +499,17 @@ class ModelTensorFlow(ModelBuilder):
         return 'tensorflow'
 
 class ModelPytorch(ModelBuilder):
-    def __init__(self, comm, filename=None, model=None,
+    def __init__(self, comm, source,
                  weights = None,
                  gpus=0):
         print("Initializing Pytorch model")
         super(ModelPytorch,self).__init__(comm)
-        self.filename = filename
-        self.model = model
-        if self.filename is not None and self.model is not None:
-            raise Exception("Model builder must be initialized with either filename or model, not both")
+        if isinstance(source, six.string_types):
+            self.filename = source
+            self.model = None
+        else:
+            self.filename = None
+            self.model = source
         self.weights = weights
         self.gpus=gpus
 

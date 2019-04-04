@@ -29,7 +29,7 @@ if __name__ == '__main__':
     parser.add_argument('--thread_validation', help='run a single process', action='store_true')
     
     # model arguments
-    parser.add_argument('model_json', help='JSON file containing model architecture')
+    parser.add_argument('model', help='File containing model architecture (serialized in JSON/pickle, or provided in a .py file')
     parser.add_argument('--trial-name', help='descriptive name for trial', 
             default='train', dest='trial_name')
 
@@ -80,7 +80,13 @@ if __name__ == '__main__':
     parser.add_argument('--restore', help='pass a file to retore the variables from', default=None)
 
     args = parser.parse_args()
-    model_name = os.path.basename(args.model_json).replace('.json','')
+    if args.model.endswith('.py'):
+        module = __import__(args.model.replace('.py',''))
+        model_arch = module.get_model()
+        model_name = module.get_name()
+    else:
+        model_arch = args.model
+        model_name = os.path.basename(args.model).replace('.json','')
 
     with open(args.train_data) as train_list_file:
         train_list = [ s.strip() for s in train_list_file.readlines() ]
@@ -116,7 +122,7 @@ if __name__ == '__main__':
         else:
             if 'gpu' in device:
                 torch.cuda.set_device(int(device[-1]))
-        model_builder = ModelPytorch(comm, filename=args.model_json, weights=model_weights, gpus=1 if 'gpu' in device else 0)
+        model_builder = ModelPytorch(comm, source=model_arch, weights=model_weights, gpus=1 if 'gpu' in device else 0)
     else:
         if args.tf: 
             backend = 'tensorflow'
@@ -150,10 +156,10 @@ if __name__ == '__main__':
             tf_device = device
             if hide_device:
                 tf_device = 'gpu0' if 'gpu' in device else ''
-            model_builder = ModelTensorFlow( comm, filename=args.model_json, device_name=tf_device , weights=model_weights)
+            model_builder = ModelTensorFlow( comm, source=model_arch, device_name=tf_device , weights=model_weights)
             print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
         else:
-            model_builder = ModelFromJson( comm, args.model_json ,weights=model_weights)
+            model_builder = ModelFromJson( comm, model_arch ,weights=model_weights)
             print ("Process {0} using device {1}".format(comm.Get_rank(),device))
             os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
             # GPU ops need to be executed synchronously in order for profiling to make sense
