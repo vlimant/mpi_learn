@@ -115,7 +115,8 @@ class MPIManager(object):
 
     def __init__(self, comm, data, algo, model_builder, num_epochs, train_list, 
                  val_list, num_masters=1, num_processes=1, synchronous=False,
-                 verbose=False, custom_objects={}, early_stopping=None,target_metric=None, monitor=False, thread_validation=False):
+                 verbose=False, custom_objects={}, early_stopping=None,target_metric=None,
+                 monitor=False, thread_validation=False, checkpoint=None, checkpoint_interval=5):
         """Create MPI communicator(s) needed for training, and create worker 
             or master object as appropriate.
 
@@ -162,6 +163,8 @@ class MPIManager(object):
         self.early_stopping = early_stopping
         self.target_metric = target_metric
         self.thread_validation = thread_validation
+        self.checkpoint = checkpoint
+        self.checkpoint_interval = checkpoint_interval
         self.make_comms(comm)
 
     def make_comms(self,comm):
@@ -254,7 +257,8 @@ class MPIManager(object):
                                         num_sync_workers=num_sync_workers,
                                         verbose=self.verbose, custom_objects=self.custom_objects,
                                         early_stopping = self.early_stopping, target_metric = self.target_metric,
-                                        threaded_validation = self.thread_validation
+                                        threaded_validation = self.thread_validation,
+                                        checkpoint=self.checkpoint, checkpoint_interval=self.checkpoint_interval
                 )
             else:
                 self.set_train_data()
@@ -266,7 +270,9 @@ class MPIManager(object):
                                         num_epochs=self.num_epochs,
                                         verbose=self.verbose,
                                         monitor=self.monitor,
-                                        custom_objects=self.custom_objects)
+                                        custom_objects=self.custom_objects,
+                                        checkpoint=self.checkpoint, checkpoint_interval=self.checkpoint_interval
+                )
         else: #Single Process mode
             from .single_process import MPISingleWorker
             self.set_val_data()
@@ -278,8 +284,8 @@ class MPIManager(object):
                                         monitor=self.monitor,
                                         custom_objects=self.custom_objects,
                                         early_stopping = self.early_stopping,
-                                        target_metric = self.target_metric
-                                        )
+                                        target_metric = self.target_metric,
+                                        checkpoint=self.checkpoint, checkpoint_interval=self.checkpoint_interval)
 
 
     def figure_of_merit(self):
@@ -409,7 +415,8 @@ class MPIKFoldManager(MPIManager):
                   synchronous=False,
                   verbose=False, custom_objects={},
                   early_stopping=None,target_metric=None,
-                  monitor=False):
+                  monitor=False,
+                  checkpoint=None, checkpoint_interval=5):
         self.comm_world = comm
         self.comm_fold = None
         self.fold_num = None
@@ -420,7 +427,8 @@ class MPIKFoldManager(MPIManager):
                                       synchronous,
                                       verbose, custom_objects,
                                       early_stopping,target_metric,
-                                      monitor)
+                                      monitor,
+                                      checkpoint=checkpoint, checkpoint_interval=checkpoint_interval)
             return
         
         if int(comm.Get_size() / float(NFolds))<=1:
@@ -447,7 +455,8 @@ class MPIKFoldManager(MPIManager):
                                   val_list_on_fold, num_masters,num_process,
                                   synchronous,
                                   verbose, custom_objects,
-                                  early_stopping,target_metric,monitor)
+                                  early_stopping,target_metric,monitor,
+                                  checkpoint=checkpoint, checkpoint_interval=checkpoint_interval)
 
     def free_comms(self):
         self.manager.free_comms()

@@ -78,6 +78,8 @@ if __name__ == '__main__':
     parser.add_argument('--gem-momentum',help='momentum for GEM',type=float, default=0.9, dest='gem_momentum')
     parser.add_argument('--gem-kappa',help='Proxy amplification parameter for GEM',type=float, default=2.0, dest='gem_kappa')
     parser.add_argument('--restore', help='pass a file to retore the variables from', default=None)
+    parser.add_argument('--checkpoint', help='Base name of the checkpointing file. If omitted no checkpointing will be done', default=None)
+    parser.add_argument('--checkpoint-interval', help='Number of epochs between checkpoints', default=5, type=int, dest='checkpoint_interval')
 
     args = parser.parse_args()
     model_name = os.path.basename(args.model_json).replace('.json','')
@@ -95,7 +97,10 @@ if __name__ == '__main__':
 
     if args.restore:
         args.restore = re.sub(r'\.algo$', '', args.restore)
-        if not args.tf:
+        if os.path.isfile(args.restore + '.latest'):
+            with open(args.restore + '.latest', 'r') as latest:
+                args.restore = latest.read().splitlines()[-1]
+        if not args.tf and os.path.isfile(args.restore + '.model'):
             model_weights = args.restore + '.model'
         if args.torch:
             model_weights += '_w'
@@ -200,7 +205,8 @@ if __name__ == '__main__':
                           verbose=args.verbose, monitor=args.monitor,
                           early_stopping=args.early_stopping,
                           target_metric=args.target_metric,
-                          thread_validation = args.thread_validation)
+                          thread_validation = args.thread_validation,
+                          checkpoint=args.checkpoint, checkpoint_interval=args.checkpoint_interval)
 
 
     # Process 0 launches the training procedure
