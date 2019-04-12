@@ -425,8 +425,13 @@ class ModelTensorFlow(ModelBuilder):
     def __init__(self, comm, source, device_name='cpu', 
             custom_objects={}, weights=None):
         if isinstance(source, six.string_types):
-            self.filename = source
-            self.model = None
+            if source.endswith('.py'):
+                module = __import__(source.replace('.py',''))
+                self.model = module.get_model()
+                self.filename = None
+            else:
+                self.filename = source
+                self.model = None
         else:
             self.filename = None
             self.model = source
@@ -505,8 +510,13 @@ class ModelPytorch(ModelBuilder):
         print("Initializing Pytorch model")
         super(ModelPytorch,self).__init__(comm)
         if isinstance(source, six.string_types):
-            self.filename = source
-            self.model = None
+            if source.endswith('.py'):
+                module = __import__(source.replace('.py',''))
+                self.model = module.get_model()
+                self.filename = None
+            else:
+                self.filename = source
+                self.model = None
         else:
             self.filename = None
             self.model = source

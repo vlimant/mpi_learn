@@ -5,5 +5,5 @@ def get_model():
     raise NotImplementedError
 
 def get_name():
-    """String containing model name."""
+    """String containing model name (optional)."""
     raise NotImplementedError
