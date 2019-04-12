@@ -47,19 +47,21 @@ def import_keras(tries=10):
             sleep(0.1)
     print ("Failed to import keras!")
 
-def load_model(filename=None, json_str=None, weights_file=None, custom_objects={}):
+def load_model(filename=None, model=None, weights_file=None, custom_objects={}):
     """Loads model architecture from JSON and instantiates the model.
         filename: path to JSON file specifying model architecture
-        json_str: (or) a json string specifying the model architecture
+        model:    (or) a Keras model to be cloned
         weights_file: path to HDF5 file containing model weights
 	custom_objects: A Dictionary of custom classes used in the model keyed by name"""
     import_keras()
-    from keras.models import model_from_json
-    if filename != None:
+    from keras.models import model_from_json, clone_model
+    if filename is not None:
         with open( filename ) as arch_f:
             json_str = arch_f.readline()
-    model = model_from_json( json_str, custom_objects=custom_objects) 
+            new_model = model_from_json( json_str, custom_objects=custom_objects) 
+    if model is not None:
+        new_model = clone_model(model)
     if weights_file is not None:
-        model.load_weights( weights_file )
-    return model
+        new_model.load_weights( weights_file )
+    return new_model
 

@@ -14,7 +14,7 @@ from time import time,sleep
 from mpi_learn.mpi.manager import MPIManager, get_device
 from mpi_learn.train.algo import Algo
 from mpi_learn.train.data import H5Data
-from mpi_learn.train.model import ModelFromJson, ModelFromJsonTF
+from mpi_learn.train.model import ModelFromJson, ModelTensorFlow
 from mpi_learn.utils import import_keras
 import socket
 
@@ -127,7 +127,7 @@ if __name__ == '__main__':
             ) ) )
 
     if args.tf:
-        #model_builder = ModelFromJsonTF( comm, args.model_json, device_name=device , weights=model_weights)
+        #model_builder = ModelTensorFlow( comm, filename=args.model_json, device_name=device , weights=model_weights)
         from mpi_learn.train.GanModel import GANModelBuilder
         model_builder  = GANModelBuilder( comm , device_name=device, tf= True, weights=model_weights)
         print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
