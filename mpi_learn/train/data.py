@@ -6,6 +6,7 @@ import os
 import time
 from threading import Thread
 import itertools
+import logging
 
 class FilePreloader(Thread):
     def __init__(self, files_list, file_open,n_ahead=2):
@@ -34,13 +35,13 @@ class FilePreloader(Thread):
                 break
             n_there = len(self.loaded.keys())
             if n_there< self.n_concurrent:
-                print ("preloading",name,"with",n_there)
+                logging.debug("preloading %s with %d",name,n_there)
                 self.getFile( name )
             else:
                 time.sleep(5)
 
     def stop(self):
-        print("Stopping FilePreloader")
+        logging.debug("Stopping FilePreloader")
         self.should_stop = True
 
 def data_class_getter(name):
@@ -51,7 +52,7 @@ def data_class_getter(name):
     try:
         return data_dict[name]
     except KeyError:
-        print ("{0:s} is not a known Data class. Returning None...".format(name))
+        logging.warning("{0:s} is not a known Data class. Returning None...".format(name))
         return None
 
 
@@ -88,18 +89,18 @@ class Data(object):
             for fn in file_names:
                 relocate = goes_to+'/'+fn.split('/')[-1]
                 if not os.path.isfile( relocate ):
-                    print ("copying %s to %s"%( fn , relocate))
+                    logging.info("copying %s to %s", fn , relocate)
                     if (self.use_s3):
                        if os.system('s3cmd get s3://gan-bucket/%s %s'%( fn ,relocate))==0:
                           relocated.append( relocate )
                        else:
-                          print ("was enable to copy the file s3://ganbucket/",fn,"to",relocate)
+                          logging.info("was unable to copy the file s3://ganbucket/%s to %s",fn,relocate)
                           relocated.append( fn ) ## use the initial one
                     else:   
                        if os.system('cp %s %s'%( fn ,relocate))==0:
                           relocated.append( relocate )
                        else:
-                          print ("was enable to copy the file",fn,"to",relocate)
+                          logging.info("was enable to copy the file %s to %s",fn,relocate)
                           relocated.append( fn ) ## use the initial one
                 else:
                     relocated.append( relocate )
@@ -116,8 +117,8 @@ class Data(object):
             try:
                 for B in self.generate_data():
                     yield B
-            except StopIteration as si:
-                print ("start over generator loop")
+            except StopIteration:
+                logging.warning("start over generator loop")
                 
     def generate_data(self):
        """Yields batches of training data until none are left."""

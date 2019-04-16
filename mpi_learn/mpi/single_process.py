@@ -2,6 +2,7 @@ import os,sys,json
 import numpy as np
 import socket
 import time
+import logging
 
 from ..train.monitor import Monitor
 from ..utils import Error, weights_from_shapes, shapes_from_weights
@@ -28,7 +29,7 @@ class MPISingleWorker(MPIWorker):
         self.check_sanity()
 
         for epoch in range(1, self.num_epochs + 1):
-            print ("MPISingle {0} beginning epoch {1:d}".format(self.ranks, self.epoch + epoch))
+            logging.info("beginning epoch {:d}".format(self.epoch + epoch))
             if self.monitor:
                 self.monitor.start_monitor()
             epoch_metrics = np.zeros((1,))
@@ -60,7 +61,7 @@ class MPISingleWorker(MPIWorker):
             self.validate()
             self.save_checkpoint()
 
-        print ("MPISingle {0} signing off".format(self.ranks))
+        logging.info("Signing off")
         if self.monitor:
             self.update_monitor( self.monitor.get_stats() )        
 
