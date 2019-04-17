@@ -1,6 +1,7 @@
 ### Algo class
 import os
 import numpy as np
+import logging
 from ast import literal_eval
 from .optimizer import get_optimizer, MultiOptimizer, OptimizerBuilder
 
@@ -51,13 +52,11 @@ class Algo(object):
                 setattr(self, opt, kwargs[opt])
             else:
                 setattr(self, opt, self.supported_opts[opt])
-            print ("algo",opt,getattr(self,opt))
 
         self.optimizer_name = optimizer
         if optimizer is not None:
             optimizer_args = { arg:val for arg,val in kwargs.items() 
                 if arg not in self.supported_opts }
-            print ("creating optimizer",optimizer)
             self.optimizer = get_optimizer( optimizer )(**optimizer_args)
         else:
             self.optimizer = None
@@ -84,6 +83,13 @@ class Algo(object):
         ## reset any caching running values
         if self.optimizer:
             self.optimizer.reset()
+    
+    def get_config(self):
+        config = {}
+        config['optimizer'] = str(self.optimizer_name)
+        for opt in self.supported_opts:
+            config[opt] = str(getattr(self, opt))
+        return config
 
     def __str__(self):
         strs = [ "optimizer: "+str(self.optimizer_name) ]
@@ -105,7 +111,6 @@ class Algo(object):
         else:
             update = []
             for cur_w, new_w in zip( cur_weights, new_weights ):
-                #print ("compute_update",type(cur_w))
                 if type(cur_w) == list:
                     ## polymorph case
                     update.append([])
@@ -152,13 +157,11 @@ class Algo(object):
     def apply_update(self, weights, update):
         """Calls the optimizer to apply an update
             and returns the resulting weights"""
-        #print ("apply_update",self.mode)
         if self.mode == 'easgd':
             return self.get_elastic_update( weights, update )
         else:
             if type(weights[0]) == list:
                 if type(self.optimizer)!= MultiOptimizer:
-                    print ("initializing MultiOptimizer from", self.optimizer)
                     self.optimizer = MultiOptimizer( self.optimizer, len(weights))
             new_weights = self.optimizer.apply_update( weights, update )
             return new_weights
@@ -170,8 +173,8 @@ class Algo(object):
     def load(self, fn):
         new_optimizer = self.optimizer.load(fn)
         if new_optimizer is not None:
-            print("Restored state from {}".format(fn))
+            logging.info("Restored state from {}".format(fn))
             self.optimizer = new_optimizer
             self.restore = True
         else:
-            print("Failed to restore state from {}, starting srom scratch".format(fn))
+            logging.warning("Failed to restore state from {}, starting srom scratch".format(fn))

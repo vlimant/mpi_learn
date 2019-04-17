@@ -5,6 +5,7 @@ import copy
 import pickle
 import os
 import re
+import logging
 
 from ..utils import weights_from_shapes
 
@@ -101,12 +102,12 @@ class RunningAverageOptimizer(Optimizer):
             old_contribution = self.rho * previous
             return new_contribution + old_contribution
         except Exception as e:
-            print ("FAILED TO COMPUTE THE RUNNING AVG SQUARE due to",str(e))
-            print ("rho",self.rho)
-            print ("min update",np.min(update))
-            print ("max update",np.max(update))
-            print ("min previous",np.min(previous))
-            print ("max previous",np.max(previous))
+            logging.error("FAILED TO COMPUTE THE RUNNING AVG SQUARE due to %s",str(e))
+            logging.debug("rho %d",self.rho)
+            logging.debug("min update %d",np.min(update))
+            logging.debug("max update %d",np.max(update))
+            logging.debug("min previous %d",np.min(previous))
+            logging.debug("max previous %d",np.max(previous))
             return previous
 
     def running_average_square(self, previous, update):
@@ -159,12 +160,12 @@ class Adam(RunningAverageOptimizer):
             old_contribution = self.beta_1 * previous
             return new_contribution + old_contribution
         except Exception as e:
-            print ("FAILED TO UPDATE THE RUNNING AVERAGE due to",str(e))
-            print ("beta_1",self.beta_1)
-            print ("min update",np.min(update))
-            print ("max update",np.max(update))
-            print ("min previous",np.min(previous))
-            print ("max previous",np.max(previous))
+            logging.error("FAILED TO UPDATE THE RUNNING AVERAGE due to %s",str(e))
+            logging.debug("beta_1 %d",self.beta_1)
+            logging.debug("min update %d",np.min(update))
+            logging.debug("max update %d",np.max(update))
+            logging.debug("min previous %d",np.min(previous))
+            logging.debug("max previous %d",np.max(previous))
             return previous
 
 
@@ -193,43 +194,38 @@ class Adam(RunningAverageOptimizer):
             try:
                 update = alpha_t * g / ( np.sqrt(g2) + self.epsilon )
             except Exception as e:
-                print ("FAILED TO MAKE A WEIGHT UPDATE due to",str(e))
-                print ("alpha_t",alpha_t)
-                print ("beta_1",self.beta_1)
-                print ("t",self.t)
-                print ("learning rate",self.learning_rate)
-                print ("rho",self.rho)
-                print ("epsilon",self.epsilon)
-                print ("min gradient",np.min( g ))
-                print ("max gradient",np.max( g ))
-                print ("min gradient 2",np.min( g2 ))
-                print ("max gradient 2",np.max( g2 ))
+                logging.error("FAILED TO MAKE A WEIGHT UPDATE due to %s",str(e))
+                logging.debug("alpha_t %d",alpha_t)
+                logging.debug("beta_1 %d",self.beta_1)
+                logging.debug("t %d",self.t)
+                logging.debug("learning rate %d",self.learning_rate)
+                logging.debug("rho %d",self.rho)
+                logging.debug("epsilon %d",self.epsilon)
+                logging.debug("min gradient %d",np.min( g ))
+                logging.debug("max gradient %d",np.max( g ))
+                logging.debug("min gradient 2 %d",np.min( g2 ))
+                logging.debug("max gradient 2 %d",np.max( g2 ))
                 try:
                     update = alpha_t * g / ( np.sqrt(g2) + self.epsilon )
-                    print ("a")
                     try:
                         new_weights.append( w - update )
                     except:
-                        print ("no sub")
+                        logging.debug("no sub")
                 except:
                     try:
                         update = g / ( np.sqrt(g2) + self.epsilon )
-                        print ("b")
-                        print ("min b",np.min( update ))
-                        print ("max b",np.max( update ))
-                        print ("min |b|",np.min(np.fabs( update)))
+                        logging.debug("min b %d",np.min( update ))
+                        logging.debug("max b %d",np.max( update ))
+                        logging.debug("min |b| %d",np.min(np.fabs( update)))
                         #update *= alpha_t
                     except:
                         try:
                             update = 1./ ( np.sqrt(g2) + self.epsilon )
-                            print ("c")
                         except:
                             try:
                                 update = 1./ ( g2 + self.epsilon )
-                                print ("d")
                             except:
-                                print ("e")
-
+                                pass
                 update = 0
             new_weights.append( w - update )
         return new_weights
@@ -318,7 +314,7 @@ class TFOptimizer(Optimizer):
         if not fn.startswith('./'):
             fn = './' + fn
         path = self.saver.save(self.sess, fn)
-        print("Saved state to", path)
+        logging.info("Saved state to %s", path)
 
     def setup_update(self, weights):
         import tensorflow as tf
@@ -648,7 +644,7 @@ class OptimizerBuilder(object):
         if self.config is None:
             self.config = {}
         if self.name == 'sgd' and 'lr' not in self.config:
-            print("Learning rate for SGD not set, using 1.0.")
+            logging.warning("Learning rate for SGD not set, using 1.0.")
             self.config['lr'] = 1.
         self.horovod_wrapper = horovod_wrapper
 
@@ -672,7 +668,7 @@ class OptimizerBuilder(object):
             'adam':     torch.optim.Adam
             }
         if self.name not in lookup:
-            print("No optimizer '{}' found, using SGD instead", self.name)
+            logging.warning("No optimizer '{}' found, using SGD instead".format(self.name))
             self.name = 'sgd'
         opt = lookup[self.name](model.parameters(), **self.config)
         if self.horovod_wrapper:

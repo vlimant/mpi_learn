@@ -1,12 +1,13 @@
 ### Monitor class
 
 import os
+import logging
 from threading import Thread
 import psutil
 try:
     import pynvml
 except:
-    print ("pynvml does not load, not monitoring available")
+    logging.warning("pynvml does not load, no monitoring available")
 import time
 
 class Monitor(object):

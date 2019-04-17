@@ -7,6 +7,7 @@ import numpy as np
 import argparse
 import json
 import re
+import logging
 
 from mpi4py import MPI
 from time import time,sleep
@@ -17,6 +18,7 @@ from mpi_learn.train.data import H5Data
 from mpi_learn.train.model import ModelFromJson, ModelTensorFlow, ModelPytorch
 from mpi_learn.utils import import_keras
 from mpi_learn.train.trace import Trace
+from mpi_learn.logger import initialize_logger
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -81,7 +83,13 @@ if __name__ == '__main__':
     parser.add_argument('--checkpoint', help='Base name of the checkpointing file. If omitted no checkpointing will be done', default=None)
     parser.add_argument('--checkpoint-interval', help='Number of epochs between checkpoints', default=5, type=int, dest='checkpoint_interval')
 
+    # logging configuration
+    parser.add_argument('--log-file', default=None, dest='log_file', help='log file to write, in additon to output stream')
+    parser.add_argument('--log-level', default='info', dest='log_level', help='log level (debug, info, warn, error)')
+
     args = parser.parse_args()
+
+    initialize_logger(filename=args.log_file, file_level=args.log_level, stream_level=args.log_level)
 
     with open(args.train_data) as train_list_file:
         train_list = [ s.strip() for s in train_list_file.readlines() ]
@@ -110,31 +118,32 @@ if __name__ == '__main__':
                 gpu_for_master=args.master_gpu)
     hide_device = True
     if args.torch:
-        print("Using pytorch")
+        logging.debug("Using pytorch")
         if not args.optimizer.endswith("torch"):
             args.optimizer = args.optimizer + 'torch'
         import torch
         if hide_device:
             os.environ['CUDA_VISIBLE_DEVICES'] = device[-1] if 'gpu' in device else ''
-            print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'])
+            logging.debug('set to device %s',os.environ['CUDA_VISIBLE_DEVICES'])
         else:
             if 'gpu' in device:
                 torch.cuda.set_device(int(device[-1]))
         model_builder = ModelPytorch(comm, source=args.model, weights=model_weights, gpus=1 if 'gpu' in device else 0)
     else:
-        if args.tf: 
+        if args.tf:
+            logging.debug("Using TensorFlow")
             backend = 'tensorflow'
             if not args.optimizer.endswith("tf"):
                 args.optimizer = args.optimizer + 'tf'
             if hide_device:
                 os.environ['CUDA_VISIBLE_DEVICES'] = device[-1] if 'gpu' in device else ''
-                print ('set to device',os.environ['CUDA_VISIBLE_DEVICES'])
+                logging.debug('set to device %s',os.environ['CUDA_VISIBLE_DEVICES'])
         else:
+            logging.debug("Using Theano")
             backend = 'theano'
             os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
         os.environ['KERAS_BACKEND'] = backend
 
-        print (backend)
         import_keras()
         import keras.backend as K
         if args.tf:
@@ -155,10 +164,10 @@ if __name__ == '__main__':
             if hide_device:
                 tf_device = 'gpu0' if 'gpu' in device else ''
             model_builder = ModelTensorFlow( comm, source=args.model, device_name=tf_device , weights=model_weights)
-            print ("Process {0} using device {1}".format(comm.Get_rank(), model_builder.device))
+            logging.debug("Using device {}".format(model_builder.device))
         else:
             model_builder = ModelFromJson( comm, args.model ,weights=model_weights)
-            print ("Process {0} using device {1}".format(comm.Get_rank(),device))
+            logging.debug("using device {}".format(device))
             os.environ['THEANO_FLAGS'] = "profile=%s,device=%s,floatX=float32" % (args.profile,device.replace('gpu','cuda'))
             # GPU ops need to be executed synchronously in order for profiling to make sense
         if args.profile:
@@ -210,13 +219,13 @@ if __name__ == '__main__':
 
     # Process 0 launches the training procedure
     if comm.Get_rank() == 0:
-        print (algo)
+        logging.debug('Training configuration: %s', algo.get_config())
 
         t_0 = time()
         histories = manager.process.train() 
         delta_t = time() - t_0
         manager.free_comms()
-        print ("Training finished in {0:.3f} seconds".format(delta_t))
+        logging.info("Training finished in {0:.3f} seconds".format(delta_t))
 
         if args.model.endswith('.py'):
             module = __import__(args.model.replace('.py',''))
@@ -230,7 +239,7 @@ if __name__ == '__main__':
         json_name = '_'.join([model_name,args.trial_name,"history.json"])
         manager.process.record_details(json_name,
                                        meta={"args":vars(args)})            
-        print ("Wrote trial information to {0}".format(json_name))
+        logging.info("Wrote trial information to {0}".format(json_name))
 
     comm.barrier()
     if args.trace: Trace.collect(clean=True)

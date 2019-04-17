@@ -6,6 +6,7 @@ import numpy as np
 import copy
 import sys
 import six
+import logging
 
 def session(f):
     def wrapper(*args, **kwargs):
@@ -33,16 +34,14 @@ class MPIModel(object):
         if self.model:
             names = self.model.metrics_names
             for name, metric in zip( names, metrics ):
-                print ("{0}: {1:.3f}".format(name,metric))
-            print ("")
+                logging.info("{0}: {1:.3f}".format(name,metric))
         else:
             for im,m in enumerate(self.models):
                 names = m.metrics_names
                 ametric = metrics[im,...]
-                print ('model {0} {1}'.format( im ,m.name))
+                logging.info('model {0} {1}'.format( im ,m.name))
                 for name, metric in zip( names,ametric):
-                    print ("{0}: {1:.3f}".format(name,metric))
-                print ("")
+                    logging.info("{0}: {1:.3f}".format(name,metric))
                 
     @session
     def get_logs(self, metrics, val=False):
@@ -76,7 +75,7 @@ class MPIModel(object):
                 try:
                     m_name = m.name
                 except:
-                    print ("no name attr")
+                    logging.warning("no name attr")
                 for m,v in it.items():
                     arg_hist.setdefault(m_name,{}).setdefault(m,[]).append(v)
         self.histories = arg_hist
@@ -177,7 +176,6 @@ class MPIModel(object):
         else:
             for im,m in enumerate(self.models):
                 fn = 'm%d_%s'%( im, args[0])
-                print (fn)
                 m.save( fn, **kwargs )
             
     def close(self):
@@ -267,7 +265,7 @@ class MPITModel(MPIModel):
         if loss in lookup:
             return lookup[loss]()
         else:
-            print("WARNING: No loss mapping found, using CrossEntropyLoss")
+            logger.warning("No loss mapping found, using CrossEntropyLoss")
             return torch.nn.CrossEntropyLoss()
 
     def _accuracy(self, output, target, topk=(1,)):
@@ -451,11 +449,11 @@ class ModelTensorFlow(ModelBuilder):
                 dev_num = int(device[3:])
                 dev_type = 'gpu'
             except ValueError:
-                print ("GPU number could not be parsed from {}; using CPU".format(device))
+                logging.warning("GPU number could not be parsed from {}; using CPU".format(device))
                 dev_num = 0
                 dev_type = 'cpu'
         else:
-            print ("Please specify 'cpu' or 'gpuN' for device name")
+            logging.warning("Please specify 'cpu' or 'gpuN' for device name; using CPU")
             dev_num = 0
             dev_type = 'cpu'
         return get_device_name(dev_type, dev_num, backend='tensorflow')
@@ -507,7 +505,6 @@ class ModelPytorch(ModelBuilder):
     def __init__(self, comm, source,
                  weights = None,
                  gpus=0):
-        print("Initializing Pytorch model")
         super(ModelPytorch,self).__init__(comm)
         if isinstance(source, six.string_types):
             if source.endswith('.py'):

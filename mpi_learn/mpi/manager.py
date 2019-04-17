@@ -6,6 +6,7 @@ from mpi4py import MPI
 import numpy as np
 import time
 import json
+import logging
 
 from ..train.data import H5Data
 from ..utils import get_num_gpus
@@ -20,7 +21,6 @@ def get_groups(comm, num_masters=1, num_processes=1):
         _,ig = divmod( ir, n_active_master )
         groups[ig].add( i_rank )
         groups[ig].add( masters[-1-ig] )
-        #print (ir,ig,i_rank,groups)
         processes[ir] =  list(range(i_rank,min(i_rank+num_processes, comm.Get_size())))
 
     groups = [sorted(g) for g in groups]
@@ -40,16 +40,14 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
         ratios = map(lambda gpu: float(gpu.entry['memory.used'])/float(gpu.entry['memory.total']), stats)
         #used = list(map(lambda gpu: float(gpu.entry['memory.used']), stats))
         #unused_gpu = filter(lambda x: x[1] < 100.0, zip(ids, used))
-        #print ("GPU usage","\n".join([json.dumps(gpu.entry, indent=2) for gpu in stats]))
         free = list(map(lambda gpu: float(gpu.entry['memory.total'])-float(gpu.entry['memory.used']), stats))
         unused_gpu = list(filter(lambda x: x[1]  > mem_lim, zip(ids, free)))
-        ##print ("unused",unused_gpu)
         return [x[0] for x in unused_gpu]
 
     # Get the ranks of the other processes that share the same host
     # and determine which GPU to take on the host
     if gpu_limit==0:
-        print ("required to not use gpu")
+        logging.info("required to not use gpu")
         dev = 'cpu'
         return dev
     
@@ -61,7 +59,6 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
         worker_id = workers_sharing_host.index( rank )
     else:
         worker_id = -1
-    print ("on",host,"with sub-rank",worker_id)
     
     for inode in range( comm.Get_size()):
         if rank == inode:
@@ -69,16 +66,16 @@ def get_device(comm, num_masters=1, gpu_limit=-1, gpu_for_master=False):
             if gpu_limit>=0:
                 gpu_list = gpu_list[:gpu_limit] #limit the number of gpu
             if len(gpu_list) == 0:
-                print("No free GPU available. Using CPU instead.")
+                logging.info("No free GPU available. Using CPU instead.")
                 dev = 'cpu'
             elif worker_id<0:
                 ## alone on that machine
-                print ("Alone on the node and taking the last gpu")
+                logging.info("Alone on the node and taking the last gpu")
                 dev = 'gpu%d' % (gpu_list[-1])
             else:
-                print ("Sharing a node and taking on the gpu")
+                logging.debug("Sharing a node and taking on the gpu")
                 dev = 'gpu%d' % (gpu_list[worker_id%len(gpu_list)])
-            print ("rank",rank,"can have",dev)
+            logging.debug("rank %d can have %s",rank,dev)
         comm.Barrier()
     return dev
             
@@ -144,7 +141,7 @@ class MPIManager(object):
         else:
             n_instances,remainder = 1,0
         if remainder:
-            print ("The accounting is not correct,",remainder,"nodes are left behind")
+            logging.info("The accounting is not correct, %d nodes are left behind",remainder)
         self.num_workers = n_instances # - self.num_masters
         self.worker_id = -1
 
@@ -182,9 +179,8 @@ class MPIManager(object):
         self.is_master = False
         rank = comm.Get_rank()
         masters, groups, processes = get_groups( comm, self.num_masters, self.num_processes)
-        print ("rank",rank)
 
-        print ("masters",masters)
+        logging.debug("masters %s", str(masters))
         if len(masters)>1:
             self.comm_masters = comm.Create( comm.Get_group().Incl( masters ))
         if rank in masters:
@@ -194,10 +190,9 @@ class MPIManager(object):
             self.should_validate = True
 
             
-        print ("groups",groups)
+        logging.debug("groups %s", str(groups))
         for igr,gr in enumerate(groups):
             if rank in gr:
-                print ("grouping in ",gr,igr)
                 self.comm_block = comm.Split( igr )
                 break
 
@@ -207,11 +202,10 @@ class MPIManager(object):
         if not self.is_master and self.comm_block:
             self.worker_id = self.comm_block.Get_rank()
 
-        print ("processes",processes)
+        logging.debug("processes %s", str(processes))
         for ipr,pr in enumerate(processes):
             if rank in pr and len(pr)>1:
                 ## make the communicator for that process group
-                print ("grouping instances in",pr,ipr)
                 self.comm_instance = comm.Split(ipr)
                 break
 
@@ -223,11 +217,9 @@ class MPIManager(object):
             ids = self.comm_instance.allgather( self.worker_id )
             self.worker_id = list(filter(lambda i:i!=-1, ids))[0]
 
-        print ("master comm",self.comm_masters,(self.comm_masters.Get_size() if self.comm_masters else "N/A"))
-        print ("block comm",self.comm_block,(self.comm_block.Get_size() if self.comm_block else "N/A"))
-        print ("instance comm",self.comm_instance,(self.comm_instance.Get_size() if self.comm_instance else "N/A"))
-        print ("worker id",self.worker_id)
-        print ("is master", self.is_master)
+        logging.debug("master comm",self.comm_masters.Get_size() if self.comm_masters else "N/A")
+        logging.debug("block comm",self.comm_block.Get_size() if self.comm_block else "N/A")
+        logging.debug("instance comm",self.comm_instance.Get_size() if self.comm_instance else "N/A")
         
         # Case (1)
         if self.num_masters > 1:
@@ -318,39 +310,39 @@ class MPIManager(object):
 
     def set_train_data(self, use_all=False):
         """Sets the training data files to be used by the current process"""
-        print ("number of workers",self.num_workers)
-        print ("number of files",len(self.train_list))
+        logging.debug("number of workers %d",self.num_workers)
+        logging.debug("number of files %d",len(self.train_list))
         if use_all:
             files_for_this_worker = self.train_list
         else:
             files_for_this_worker = [fn for  (i,fn) in enumerate(self.train_list) if i%self.num_workers==(self.worker_id-1)]
 
-        print ("Files for worker id{}, rank {}:{}".format(self.worker_id,self.comm_block.Get_rank() if self.comm_block else "N/A",
+        logging.debug("Files for worker id{}, rank {}:{}".format(self.worker_id,self.comm_block.Get_rank() if self.comm_block else "N/A",
                                                self.comm_instance.Get_rank() if self.comm_instance else "N/A")
                )
         if not files_for_this_worker:
             ## this is bad and needs to make it abort
-            print ("There are no files for training, this is a fatal issue")
+            logging.debug("There are no files for training, this is a fatal issue")
             import sys
             sys.exit(13)
             
         for f in files_for_this_worker:
-            print ("  {0}".format(f))
+            logging.debug("  {0}".format(f))
         self.data.set_file_names( files_for_this_worker )
 
     def set_val_data(self):
         """Sets the validation data files to be used by the current process
             (only the master process has validation data associated with it)"""
         if not self.should_validate: return None
-        print ("Files for validation:" )
+        logging.debug("Files for validation:" )
         if not self.val_list:
             ## this is bad and needs to make it abort
-            print ("There are no files for validating, this is a fatal issue")
+            logging.error("There are no files for validating, this is a fatal issue")
             import sys
             sys.exit(13)
                                                 
         for f in self.val_list:
-            print ("  {0}".format(f))
+            logging.debug("  {0}".format(f))
         self.data.set_file_names( self.val_list )
 
 #    def make_comms_many(self,comm):
@@ -392,13 +384,13 @@ class MPIManager(object):
     def free_comms(self):
         """Free active MPI communicators"""
         if self.process.process_comm is not None:
-            print ("holding on",self.process.process_comm.Get_size())
+            logging.debug("holding on %d",self.process.process_comm.Get_size())
             self.process.process_comm.Barrier()
             if self.model_builder.get_backend_name() == 'pytorch':
                 import horovod.torch as hvd
             else:
                 import horovod.keras as hvd
-            print ("Shutting down Horovod")
+            logging.debug("Shutting down Horovod")
             hvd.shutdown()
         if self.comm_block is not None:
             self.comm_block.Free()
@@ -432,18 +424,18 @@ class MPIKFoldManager(MPIManager):
             return
         
         if int(comm.Get_size() / float(NFolds))<=1:
-            print ("There is less than one master+one worker per fold, this isnt' going to work")
+            logging.warning("There is less than one master+one worker per fold, this isn't going to work")
             
         ## actually split further the work in folds
         rank = comm.Get_rank()
         fold_num = int(rank * NFolds / comm.Get_size())
         self.fold_num = fold_num
         self.comm_fold = comm.Split(fold_num)
-        print ("For node {}, with block rank {}, send in fold {}".format(MPI.COMM_WORLD.Get_rank(), rank, fold_num))
+        logging.debug("For node {}, with block rank {}, send in fold {}".format(MPI.COMM_WORLD.Get_rank(), rank, fold_num))
         self.manager = None
 
         if val_list:
-            print ("MPIKFoldManager would not expect to be given a validation list")
+            logging.warning("MPIKFoldManager would not expect to be given a validation list")
         all_files = train_list+val_list
         from sklearn.model_selection import KFold
         folding = KFold(n_splits = NFolds)
@@ -474,9 +466,9 @@ class MPIKFoldManager(MPIManager):
             avg_fom = np.mean( foms )
             std_fom = np.std( foms )
             if self.comm_fold.Get_rank()==0:
-                print ("Figure of merits over {} folds is {}+/-{}".format( len(foms), avg_fom, std_fom))
+                logging.info("Figure of merits over {} folds is {}+/-{}".format( len(foms), avg_fom, std_fom))
             return avg_fom
         else:
             if fom is not None:
-                print ("Figure of merits from single value {}".format( fom ))
+                logging.info("Figure of merits from single value {}".format( fom ))
             return fom

@@ -1,6 +1,8 @@
 ### Utilities for mpi_learn module
-
+import os
+import sys
 import numpy as np
+import logging
 
 class Error(Exception):
     pass
@@ -15,11 +17,11 @@ def shapes_from_weights(weights):
 
 def get_num_gpus():
     """Returns the number of GPUs available"""
-    print ("Determining number of GPUs...")
+    logging.debug("Determining number of GPUs...")
     from pycuda import driver 
     driver.init()
     num_gpus = driver.Device.count()
-    print ("Number of GPUs: {}".format(num_gpus))
+    logging.debug("Number of GPUs: {}".format(num_gpus))
     return num_gpus
 
 def get_device_name(dev_type, dev_num, backend='theano'):
@@ -39,13 +41,16 @@ def import_keras(tries=10):
         as a workaround, just try several times to import keras."""
     for try_num in range(tries):
         try:
+            stderr = sys.stderr
+            sys.stderr = open(os.devnull, 'w')
             import keras
+            sys.stderr = stderr
             return
         except ValueError:
-            print ("Unable to import keras. Trying again: {0:d}".format(try_num))
+            logging.warning("Unable to import keras. Trying again: {0:d}".format(try_num))
             from time import sleep
             sleep(0.1)
-    print ("Failed to import keras!")
+    logging.error("Failed to import keras!")
 
 def load_model(filename=None, model=None, weights_file=None, custom_objects={}):
     """Loads model architecture from JSON and instantiates the model.
