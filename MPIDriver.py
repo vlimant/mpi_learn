@@ -242,4 +242,5 @@ if __name__ == '__main__':
         logging.info("Wrote trial information to {0}".format(json_name))
 
     comm.barrier()
+    logging.info("Terminating")
     if args.trace: Trace.collect(clean=True)
