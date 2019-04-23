@@ -28,6 +28,7 @@ class Optimizer(object):
         d= open(fn,'wb')
         pickle.dump(self, d)
         d.close()
+        logging.info("Saved state to %s", fn)
 
     def load(self, fn = 'algo_.pkl'):
         if not fn.endswith('.algo'):
@@ -488,6 +489,7 @@ class TorchOptimizer(Optimizer):
         state = self.torch_optimizer.state_dict()
         with open(fn, 'wb') as out_file:
             pickle.dump(state, out_file)
+        logging.info("Saved state to %s", fn)
 
     def load(self, fn = 'algo_.pkl'):
         if not fn.endswith('.algo'):
