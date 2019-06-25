@@ -7,7 +7,7 @@ except:
     print ("hum")
 import numpy as np
 import sys
-
+import keras
 def get_data(datafile):
     #get data for training
     #print ('Loading Data from .....', datafile)
@@ -20,7 +20,11 @@ def get_data(datafile):
     X = X.astype(np.float32)
     y = y.astype(np.float32)
     y = y/100.
-    ecal = np.squeeze(np.sum(X, axis=(1, 2, 3)))
+    if keras.backend.image_data_format() !='channels_last':
+       X =np.moveaxis(X, -1, 1)
+       ecal = np.squeeze(np.sum(X, axis=(2, 3, 4)))
+    else:
+       ecal = np.squeeze(np.sum(X, axis=(1, 2, 3)))
     print (X.shape)
     print (y.shape)
     print (ecal.shape)
